@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"status\": \"stopped\"}' > $CLAUDE_PROJECT_DIR/.agentloop/session-status.json"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.agentloop/hooks/on-stop.py"
           }
         ]
       }

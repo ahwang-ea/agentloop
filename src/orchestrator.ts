@@ -1,221 +1,118 @@
-// orchestrator.ts — The core state machine.
-// This file manages the full task pipeline.
-// Each step is deterministic code, not an LLM deciding.
-
+// orchestrator.ts — Core state machine. Each transition is code, not a prompt.
 import type {
-  AgentloopConfig,
-  TaskDefinition,
-  TaskState,
-  ConvergenceState,
-  ReviewFinding,
-  BehaviorChange,
-  ClaudeAdapter,
-  CodexAdapter,
-  GitAdapter,
-  NotifierAdapter,
-  TaskQueueAdapter,
-} from './types.js';
+  AgentloopConfig, TaskDefinition, FinalizationState, ClaimedActionableTask, ConvergenceState, SessionOutput,
+  ClaudeAdapter, CodexAdapter, GitAdapter, NotifierAdapter, TaskQueueAdapter,
+} from './types/index.js';
 import { ok, err, type Result } from './shared/result.js';
-import { classifyConvergence, trackRound } from './core/convergence.js';
 import { runVerify } from './core/verifier.js';
-import { runParallelReviews, formatFixPrompt } from './core/reviewer.js';
-import { detectBehaviorChanges } from './core/behavior.js';
+import { architectSweep } from './core/sweep.js';
+import { verifyLoop } from './core/verify-loop.js';
+import { reviewPhase } from './core/review-loop.js';
+import { finalize } from './core/finalizer.js';
+import { withLease } from './core/lease.js';
 
-interface OrchestratorDeps {
-  claude: ClaudeAdapter;
-  codex: CodexAdapter;
-  git: GitAdapter;
-  notifier: NotifierAdapter;
-  queue: TaskQueueAdapter;
-  config: AgentloopConfig;
+export interface Deps { claude: ClaudeAdapter; codex: CodexAdapter; git: GitAdapter; notifier: NotifierAdapter; queue: TaskQueueAdapter; config: AgentloopConfig; }
+const MAX_FINALIZE_RETRIES = 3;
+const slugify = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+const chk = (r: Result<SessionOutput>): Result<SessionOutput> =>
+  r.ok && !r.value.text.trim() && r.value.changedFiles.length === 0 ? err('EMPTY_RESPONSE', 'Agent returned empty output and changed no files') : r;
+
+async function notify(d: Deps, taskId: string | undefined, summary: string, details: string,
+  type: 'escalation' | 'behavior-change' | 'sweep-result' | 'promotion-ready' = 'escalation', idempotencyKey?: string): Promise<Result<void>> {
+  const r = await d.notifier.send({ type, taskId, summary, details, timestamp: new Date().toISOString(), idempotencyKey });
+  return r.ok ? ok(undefined) : err('NOTIFY_FAILED', r.error.message);
+}
+async function escalate(d: Deps, task: TaskDefinition, reason: string, token: string): Promise<Result<void>> {
+  const s = await d.queue.markStuck(task.id, reason, token);
+  return s.ok ? notify(d, task.id, `Stuck: ${task.title}`, reason) : err(s.error.code, `markStuck: ${s.error.message}`);
+}
+async function claim(d: Deps): Promise<Result<ClaimedActionableTask | null>> {
+  while (true) {
+    const c = await d.queue.claimNextActionable(d.config.maxParallelAgents);
+    if (c.ok || c.error.code !== 'QUEUE_CORRUPT') return c;
+    await notify(d, undefined, 'Queue corrupted', c.error.message);
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
 }
 
-export async function runOrchestrator(deps: OrchestratorDeps): Promise<void> {
-  const { claude, codex, git, notifier, queue, config } = deps;
-  let tasksSinceSweep = 0;
-
+export async function runOrchestrator(deps: Deps): Promise<Result<void>> {
+  if (!deps.config.codexEnabled) {
+    return err('CONFIG_ERROR', 'Parallel Opus + Codex review is required by ARCHITECTURE.md');
+  }
+  let sweepCounter = 0;
   while (true) {
-    // --- Pick task ---
-    const nextTask = await queue.next();
-    if (!nextTask.ok) break;
-    if (nextTask.value === null) {
-      // Queue empty — trigger architect sweep to propose work
-      await notifier.send({
-        type: 'sweep-result',
-        summary: 'Task queue empty. Architect sweep needed.',
-        details: 'No tasks remaining. Review ARCHITECTURE.md for next priorities.',
-        timestamp: new Date(),
-      });
-      break;
+    let claimed: ClaimedActionableTask;
+    const c = await claim(deps);
+    if (!c.ok) { await notify(deps, undefined, `Queue error: ${c.error.code}`, c.error.message); return c; }
+    if (c.value) claimed = c.value;
+    else {
+      const sw = await architectSweep(deps); if (!sw.ok) return sw;
+      const post = await claim(deps); if (!post.ok) return post;
+      if (!post.value) return ok(undefined);
+      claimed = post.value;
     }
-
-    const task = nextTask.value;
-    const branchName = `task/${task.id}-${slugify(task.title)}`;
-
-    // --- Create branch ---
-    const branch = await git.createBranch(branchName);
-    if (!branch.ok) { await escalate(deps, task, branch.error); continue; }
-
-    // --- Write + Verify loop (Loop 1) ---
-    const writeResult = await writeLoop(deps, task);
-    if (!writeResult.ok) { await escalate(deps, task, writeResult.error); continue; }
-
-    // --- Cross-model review (Loop 2) ---
-    const reviewResult = await reviewLoop(deps, task);
-    if (!reviewResult.ok) { await escalate(deps, task, reviewResult.error); continue; }
-
-    // --- Cleanup pass ---
-    await claude.cleanup();
-    const cleanupVerify = await runVerify(config.verifyCommand);
-    if (!cleanupVerify.ok || !cleanupVerify.value.pass) {
-      // Cleanup broke something — one more fix round
-      await claude.fix(cleanupVerify.ok ? cleanupVerify.value.output : 'Verify failed after cleanup');
-      await runVerify(config.verifyCommand);
-    }
-
-    // --- Merge ---
-    await git.commit(`feat: ${task.title}`);
-    const diff = await git.getDiff('main');
-    await git.merge(branchName);
-    await git.rebaseAll(branchName);
-
-    // --- Behavior check ---
-    if (diff.ok) {
-      const behavior = detectBehaviorChanges(diff.value);
-      if (behavior.hasChanges) {
-        await notifier.send({
-          type: 'behavior-change',
-          taskId: task.id,
-          summary: behavior.changes.map(c => c.description).join('\n'),
-          details: `Files: ${behavior.changes.flatMap(c => c.files).join(', ')}`,
-          timestamp: new Date(),
-        });
-        // Auto-create README update task
-        if (behavior.readmeUpdateNeeded) {
-          await queue.add({
-            title: `Update README for ${task.title}`,
-            description: `Behavior changes: ${behavior.changes.map(c => c.description).join('; ')}. Update README.md to reflect these changes.`,
-            scope: { editableFiles: ['README.md'], readOnlyContext: [], forbiddenFiles: [] },
-            acceptanceCriteria: ['README reflects current behavior'],
-            model: 'auto',
-            priority: 'medium',
-          });
+    const { state, claimToken } = claimed;
+    if (state.status === 'finalizing') {
+      const f = await finalize(deps, state.task, state.finalization, claimToken);
+      if (!f.ok) {
+        const updated: FinalizationState = { ...state.finalization, failCount: state.finalization.failCount + 1 };
+        const uf = await deps.queue.updateFinalization(state.task.id, updated, claimToken); if (!uf.ok) return uf;
+        if (updated.failCount >= MAX_FINALIZE_RETRIES) {
+          const e = await escalate(deps, state.task, `Finalization failed ${MAX_FINALIZE_RETRIES}x: ${f.error.message}`, claimToken);
+          if (!e.ok) return e;
+        } else {
+          const rc = await deps.queue.releaseClaim(state.task.id, claimToken); if (!rc.ok) return rc;
         }
       }
+      continue;
     }
-
-    await queue.markDone(task.id);
-    tasksSinceSweep++;
-
-    // --- Periodic sweep ---
-    if (tasksSinceSweep >= config.sweepInterval) {
-      tasksSinceSweep = 0;
-      await architectSweep(deps);
+    const branch = state.branch ?? `task/${state.task.id}-${slugify(state.task.title)}`;
+    const checkout = state.branch ? await deps.git.checkoutBranch(branch) : await deps.git.createBranch(branch, deps.config.baseBranch);
+    if (!checkout.ok) { const e = await escalate(deps, state.task, checkout.error.message, claimToken); if (!e.ok) return e; continue; }
+    const sp = await deps.queue.updateProgress(state.task.id, { branch, round: state.round, convergence: state.convergence }, claimToken);
+    if (!sp.ok) return sp;
+    const result = await runTask(deps, state.task, branch, state.convergence, claimToken);
+    if (!result.ok) {
+      if (result.error.code === 'FINALIZATION_PERSIST_FAILED') {
+        const e = await escalate(deps, state.task, result.error.message, claimToken); if (!e.ok) return e; continue;
+      }
+      if (result.error.code === 'REVIEW_CONFLICT' || result.error.code === 'REVIEW_STUCK') continue;
+      let reason = result.error.message;
+      if (result.error.code !== 'MERGE_CONFLICT') {
+        const ab = await deps.git.abandonBranch(branch); if (!ab.ok) reason += `; abandonBranch: ${ab.error.message}`;
+      }
+      const e = await escalate(deps, state.task, reason, claimToken); if (!e.ok) return e; continue;
     }
+    if (++sweepCounter >= deps.config.sweepInterval) { sweepCounter = 0; const sw = await architectSweep(deps); if (!sw.ok) return sw; }
   }
 }
 
-// --- Write Loop: agent writes, verify runs, retry on failure ---
-async function writeLoop(deps: OrchestratorDeps, task: TaskDefinition): Promise<Result<void>> {
-  const { claude, config } = deps;
-  const convergence: ConvergenceState = { rounds: [], classification: 'unknown', webSearchTriggered: false };
-  const startTime = Date.now();
-
-  // Initial write
-  await claude.write(task.description, task.scope);
-
-  while (true) {
-    const verify = await runVerify(config.verifyCommand);
-    if (!verify.ok) return err(verify.error);
-
-    const round = trackRound(convergence, verify.value);
-    const elapsed = (Date.now() - startTime) / 1000;
-
-    if (verify.value.pass) return ok(undefined);
-
-    // Budget check
-    if (elapsed > config.convergence.maxWallClock) return err(`Budget exceeded after ${round} rounds`);
-
-    // Convergence classification
-    const classification = classifyConvergence(convergence, config.convergence);
-    convergence.classification = classification;
-
-    if (classification === 'stuck') return err(`Stuck: same error ${config.convergence.stuckThreshold} rounds`);
-    if (classification === 'thrashing') return err('Thrashing: errors oscillating');
-
-    // Web search trigger: same error twice → search before third attempt
-    if (shouldWebSearch(convergence) && !convergence.webSearchTriggered) {
-      convergence.webSearchTriggered = true;
-      await claude.fix(`Search for this error, then fix based on what you find:\n${verify.value.errors[0]?.message}`);
-    } else {
-      await claude.fix(verify.value.output);
-    }
+async function runTask(d: Deps, task: TaskDefinition, branch: string, seed: ConvergenceState | undefined, token: string): Promise<Result<void>> {
+  const conv = seed ?? { rounds: [], classification: 'unknown' as const, webSearchTriggered: false };
+  const t0 = Date.now();
+  const session = await d.claude.startSession(task); if (!session.ok) return session;
+  const stopped = chk(await withLease(() => d.claude.waitForStop(session.value), () => d.queue.renewClaim(task.id, token)));
+  if (!stopped.ok) return err(stopped.error.code, stopped.error.message);
+  let s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
+  let r = await verifyLoop(d, session.value, task.id, stopped.value.tokensDelta, conv, t0, token); if (!r.ok) return r;
+  s = await d.queue.updateStatus(task.id, 'reviewing', token); if (!s.ok) return s;
+  r = await reviewPhase(d, session.value, task, conv, t0, token); if (!r.ok) return r;
+  s = await d.queue.updateStatus(task.id, 'cleanup', token); if (!s.ok) return s;
+  const cleanup = chk(await withLease(() => d.claude.cleanup(session.value), () => d.queue.renewClaim(task.id, token)));
+  if (!cleanup.ok) return err(cleanup.error.code, cleanup.error.message);
+  s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
+  r = await verifyLoop(d, session.value, task.id, cleanup.value.tokensDelta, conv, t0, token); if (!r.ok) return r;
+  const fv = await runVerify(d.config.verifyCommand); if (!fv.ok || !fv.value.pass) return err('VERIFY_FAILED', 'Final verify failed before merge');
+  s = await d.queue.updateStatus(task.id, 'merging', token); if (!s.ok) return s;
+  const commit = await d.git.commit(`feat: ${task.title}`); if (!commit.ok) return commit;
+  const co = await d.git.checkoutBase(d.config.baseBranch); if (!co.ok) return err(co.error.code, `checkoutBase failed: ${co.error.message}`, co.error.details);
+  const merge = await d.git.merge(branch, d.config.baseBranch);
+  if (!merge.ok) {
+    const ab = await d.git.abortMerge();
+    if (!ab.ok) return err(merge.error.code, `${merge.error.message}; abortMerge also failed: ${ab.error.message}`, { mergeError: merge.error, abortError: ab.error });
+    return err(merge.error.code, merge.error.message, merge.error.details);
   }
-}
-
-// --- Review Loop: parallel Opus + Codex reviews ---
-async function reviewLoop(deps: OrchestratorDeps, task: TaskDefinition): Promise<Result<void>> {
-  const { claude, codex, git, config } = deps;
-
-  const diff = await git.getDiff('main');
-  if (!diff.ok) return err(diff.error);
-
-  const reviews = await runParallelReviews(deps, task, diff.value);
-  if (!reviews.ok) return err(reviews.error);
-
-  const allFindings = reviews.value.flatMap(r => r.findings);
-  if (allFindings.length === 0) return ok(undefined);
-
-  // Fix findings
-  const fixPrompt = formatFixPrompt(allFindings);
-  await claude.fix(fixPrompt);
-
-  // Re-verify after fixes
-  const reVerify = await runVerify(config.verifyCommand);
-  if (!reVerify.ok || !reVerify.value.pass) {
-    // One more attempt
-    await claude.fix(reVerify.ok ? reVerify.value.output : 'Verify failed after review fixes');
-    await runVerify(config.verifyCommand);
-  }
-
-  return ok(undefined);
-}
-
-// --- Helpers ---
-async function escalate(deps: OrchestratorDeps, task: TaskDefinition, reason: string): Promise<void> {
-  await deps.queue.markStuck(task.id, reason);
-  await deps.notifier.send({
-    type: 'escalation',
-    taskId: task.id,
-    summary: `Stuck: ${task.title}`,
-    details: reason,
-    timestamp: new Date(),
-  });
-}
-
-async function architectSweep(deps: OrchestratorDeps): Promise<void> {
-  // TODO: Implement sweep — read ARCHITECTURE.md, check file sizes,
-  // check for unplanned deps, check shared type consistency.
-  // For now, just notify that a sweep is due.
-  await deps.notifier.send({
-    type: 'sweep-result',
-    summary: 'Architect sweep due',
-    details: 'Manual review of codebase vs ARCHITECTURE.md recommended.',
-    timestamp: new Date(),
-  });
-}
-
-function shouldWebSearch(convergence: ConvergenceState): boolean {
-  const rounds = convergence.rounds;
-  if (rounds.length < 2) return false;
-  const current = rounds[rounds.length - 1];
-  const prev = rounds[rounds.length - 2];
-  // Same first error two rounds in a row
-  return current.issueHashes.length > 0 &&
-    prev.issueHashes.length > 0 &&
-    current.issueHashes[0] === prev.issueHashes[0];
-}
-
-function slugify(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+  const fin: FinalizationState = { mergeCommit: merge.value, branch, behaviorNotified: false, readmeTaskEnsured: false, completionNotified: false, rebaseDone: false, failCount: 0 };
+  const bf = await d.queue.beginFinalization(task.id, fin, token);
+  return bf.ok ? ok(undefined) : err('FINALIZATION_PERSIST_FAILED', `Merge succeeded (${merge.value}) but beginFinalization failed: ${bf.error.message}`, { mergeCommit: merge.value, branch });
 }

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.agentloop/
+*.js
+*.d.ts
+*.map
+!jest.config.js
