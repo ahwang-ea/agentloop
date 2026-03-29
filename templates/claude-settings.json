@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/verify.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.agentloop/hooks/scope-check.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"status\": \"stopped\"}' > $CLAUDE_PROJECT_DIR/.agentloop/session-status.json"
+          }
+        ]
+      }
+    ]
+  }
+}
