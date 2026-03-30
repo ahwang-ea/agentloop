@@ -54,9 +54,11 @@ test('archives old done and stuck tasks', async () => {
 test('rotates stale metrics logs during gc', async () => {
   const error = jest.spyOn(console, 'error').mockImplementation(() => {});
   const repoPath = await repo(), metrics = join(repoPath, '.agentloop', 'metrics.jsonl');
+  const archivedAt = new Date(Date.now() - (100 * 24 * 60 * 60 * 1000));
+  const archivedName = `metrics-${archivedAt.toISOString().slice(0, 10)}.jsonl`;
   await mkdir(join(repoPath, '.agentloop'), { recursive: true });
   await writeFile(metrics, '{"task":"old"}\n');
-  await utimes(metrics, new Date('2025-01-01T00:00:00.000Z'), new Date('2025-01-01T00:00:00.000Z'));
+  await utimes(metrics, archivedAt, archivedAt);
   const result = await gc({
     config: config(repoPath),
     queue: { list: async () => ({ ok: true, value: [] }) } as never,
@@ -64,6 +66,6 @@ test('rotates stale metrics logs during gc', async () => {
   }, task, { mergeCommit: 'abc', branch: 'al/task', mergeInto: 'main', behaviorNotified: true, readmeTaskEnsured: true, completionNotified: true, rebaseDone: true, failCount: 0 });
   expect(result.ok).toBe(true);
   expect(await readFile(metrics, 'utf-8')).toBe('');
-  expect(await stat(join(repoPath, '.agentloop', 'metrics-archive', 'metrics-2025-01-01.jsonl')).then(() => true)).toBe(true);
+  expect(await stat(join(repoPath, '.agentloop', 'metrics-archive', archivedName)).then(() => true)).toBe(true);
   error.mockRestore();
 });

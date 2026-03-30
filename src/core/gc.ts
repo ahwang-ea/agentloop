@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, FinalizationState, TaskDefinition, TaskQueueAdapter, TaskState } from '../types/index.js';
 import { featureBranchName } from './feature.js';
+import { pruneGcArchives } from './gc-retention.js';
 import { metricsPath } from './metrics.js';
 import { notificationStatePath, pruneNotificationKeys } from './notifier.js';
 import { taskBranchName, withBranchPrefix, worktreePathForBranch, worktreeRootPath } from './worktree.js';
@@ -133,7 +134,6 @@ async function archiveResearch(config: AgentloopConfig, task: TaskDefinition, fi
     return ok(undefined);
   } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
-
 export async function gc(d: GcDeps, task: TaskDefinition, fin: FinalizationState): Promise<Result<void>> {
   await record('task branch', () => removeBranch(d.config, fin.branch));
   const taskBranch = withBranchPrefix(d.config, taskBranchName(task));
@@ -142,6 +142,7 @@ export async function gc(d: GcDeps, task: TaskDefinition, fin: FinalizationState
   await record('notifications', () => pruneNotificationKeys(d.config));
   await record('task archive', () => archiveOldTasks(d.config));
   await record('metrics', () => rotateMetrics(d.config));
+  await record('archives', () => pruneGcArchives(d.config));
   await record('temp files', () => cleanupFiles(d.config));
   await record('research archive', () => archiveResearch(d.config, task, fin));
   await record('claude sessions', () => d.claude.evictTaskSessions(task.id));
