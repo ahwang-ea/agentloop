@@ -4,6 +4,7 @@ export type TaskStatus =
   | 'queued' | 'writing' | 'verifying' | 'reviewing' | 'fixing'
   | 'cleanup' | 'merging' | 'finalizing' | 'done' | 'stuck' | 'blocked';
 export type TaskPriority = 'low' | 'medium' | 'high';
+export type TaskType = 'research' | 'implement' | 'integrate' | 'debug';
 export type ModelPreference = 'claude' | 'auto';
 
 export interface TaskDefinition {
@@ -11,12 +12,14 @@ export interface TaskDefinition {
   title: string;
   description: string;
   feature?: string;
+  type: TaskType;
   scope: TaskScope;
   acceptanceCriteria: string[];
   model?: ModelPreference;
   priority: TaskPriority;
   createdAt: string;
 }
+export type TaskInput = Omit<TaskDefinition, 'id' | 'createdAt' | 'type'> & { type?: TaskType };
 
 export interface TaskScope { editableFiles: string[]; readOnlyContext: string[]; forbiddenFiles: string[]; }
 

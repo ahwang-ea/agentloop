@@ -25,3 +25,13 @@ test('runs staged verify in merge mode', async () => {
   expect(result.ok && result.value.pass).toBe(true);
   expect(await readFile(join(repoPath, 'log.txt'), 'utf-8')).toBe('typecheck\nrelated\nfull\nlint\n');
 });
+
+test('runs integration command only for integrate tasks', async () => {
+  const repoPath = await repo();
+  await writeFile(join(repoPath, 'package.json'), JSON.stringify({ name: 'progressive', scripts: { typecheck: nodeScript('typecheck') } }), 'utf-8');
+  await writeFile(join(repoPath, 'verify.sh'), await readFile(join(process.cwd(), 'templates', 'verify.sh'), 'utf-8'), 'utf-8');
+  await chmod(join(repoPath, 'verify.sh'), 0o755);
+  const result = await progressiveVerify({ verifyCommand: './verify.sh', integrationTestCommand: nodeScript('integration') } as never, [], repoPath, false, 'integrate');
+  expect(result.ok && result.value.pass).toBe(true);
+  expect(await readFile(join(repoPath, 'log.txt'), 'utf-8')).toBe('typecheck\nintegration\n');
+});

@@ -5,7 +5,8 @@ import { err, type Result } from '../shared/result.js';
 import type { CodexAdapter, ReviewResult } from '../types/index.js';
 import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
 
-export function createCodexAdapter(apiKey: string, model: string): CodexAdapter {
+export function createCodexAdapter(apiKey: string | undefined, model: string): CodexAdapter {
+  if (!apiKey) return { review: async () => err('CONFIG_ERROR', 'OPENAI_API_KEY is required for Codex review') };
   const client = new OpenAI({ apiKey });
   return {
     async review(request): Promise<Result<ReviewResult>> {

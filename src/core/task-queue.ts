@@ -16,8 +16,11 @@ const active = new Set(['writing', 'verifying', 'reviewing', 'fixing', 'cleanup'
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const pathOf = (c: AgentloopConfig) => isAbsolute(c.taskFilePath ?? 'tasks.json') ? c.taskFilePath! : join(c.repoPath, c.taskFilePath ?? 'tasks.json');
 const expired = (claim?: Lease) => !claim || Date.parse(claim.expiresAt) <= Date.now();
-const strip = ({ claim: _c, dedupeKey: _d, ...task }: TaskRecord): TaskState => task;
+const withType = (task: TaskDefinition): TaskDefinition => ({ ...task, type: task.type ?? 'implement' });
+const normalize = (task: TaskRecord): TaskRecord => ({ ...task, task: withType(task.task) });
+const strip = ({ claim: _c, dedupeKey: _d, ...task }: TaskRecord): TaskState => ({ ...task, task: withType(task.task) });
 const countByPrefix = (tasks: TaskRecord[], prefix: string) => tasks.filter(task => task.dedupeKey?.startsWith(prefix) && task.status !== 'done' && task.status !== 'stuck').length;
+const claimedIntegrate = (tasks: TaskRecord[]) => tasks.some(task => task.task.type === 'integrate' && active.has(task.status) && task.claim && !expired(task.claim));
 
 async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise<Result<T>> {
   const lock = `${path}.lock`;
@@ -33,7 +36,7 @@ async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise
   try { return await run(); } finally { await rm(lock, { recursive: true, force: true }); }
 }
 async function load(path: string): Promise<Result<TaskRecord[]>> {
-  try { return ok(JSON.parse(await readFile(path, 'utf-8')) as TaskRecord[]); }
+  try { return ok((JSON.parse(await readFile(path, 'utf-8')) as TaskRecord[]).map(normalize)); }
   catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return ok([]);
@@ -70,15 +73,16 @@ export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
           finalizing.claim = nextLease; const saved = await save(path, records); if (!saved.ok) return saved;
           return ok({ state: { status: 'finalizing', task: finalizing.task, finalization: finalizing.finalization! }, claimToken: nextLease.token });
         }
-        if (activeCount >= maxParallelAgents) return ok(null);
+        if (claimedIntegrate(records) || activeCount >= maxParallelAgents) return ok(null);
         const resumable = records.find(t => active.has(t.status) && expired(t.claim));
         if (resumable) {
-          resumable.status = 'writing'; resumable.claim = nextLease;
+          if (resumable.task.type === 'integrate' && activeCount > 0) return ok(null);
+          resumable.status = resumable.status === 'merging' ? 'merging' : 'writing'; resumable.claim = nextLease;
           const saved = await save(path, records); if (!saved.ok) return saved;
-          return ok({ state: { status: 'writing', task: resumable.task, branch: resumable.branch, round: resumable.round, convergence: resumable.convergence }, claimToken: nextLease.token });
+          return ok({ state: { status: resumable.status as 'writing' | 'merging', task: resumable.task, branch: resumable.branch, round: resumable.round, convergence: resumable.convergence }, claimToken: nextLease.token });
         }
         const queued = pickQueuedTask(records);
-        if (!queued) return ok(null);
+        if (!queued || (queued.task.type === 'integrate' && activeCount > 0)) return ok(null);
         queued.status = 'writing'; queued.claim = nextLease; queued.startedAt = new Date().toISOString();
         const saved = await save(path, records); if (!saved.ok) return saved;
         return ok({ state: { status: 'writing', task: queued.task, branch: queued.branch, round: queued.round, convergence: queued.convergence }, claimToken: nextLease.token });
@@ -97,13 +101,16 @@ export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
       const tasks = await load(path); if (!tasks.ok) return tasks;
       const task = tasks.value.find(t => t.task.id === taskId && t.status === 'blocked');
       if (!task) return err('QUEUE_EMPTY', `Blocked task not found: ${taskId}`);
-      if (!task.finalization) return err('CONFIG_ERROR', `Task ${taskId} is blocked but has no finalization state`);
-      Object.assign(task, { status: 'finalizing', blocked: undefined, completedAt: undefined, claim: undefined, finalization: { ...task.finalization, approved: true } });
+      if (task.finalization) {
+        Object.assign(task, { status: 'finalizing', blocked: undefined, completedAt: undefined, claim: undefined, finalization: { ...task.finalization, approved: true } });
+      } else if (task.blocked?.details.kind === 'research-approval') {
+        Object.assign(task, { status: 'merging', blocked: undefined, completedAt: undefined, claim: undefined });
+      } else Object.assign(task, { status: 'queued', blocked: undefined, round: 0, convergence: undefined, completedAt: undefined, claim: undefined });
       return save(path, tasks.value);
     }); },
     async releaseClaim(taskId, claimToken) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = withClaim(tasks.value, taskId, claimToken); if (!task.ok) return task; task.value.claim = undefined; return save(path, tasks.value); }); },
-    async add(task) { const normalized = await normalizeTaskForRepo(config.repoPath, task); if (!normalized.ok) return normalized; return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const record: TaskRecord = { task: { ...normalized.value, id: randomUUID(), createdAt: new Date().toISOString() }, status: 'queued', round: 0, startedAt: new Date().toISOString() }; tasks.value.push(record); const saved = await save(path, tasks.value); return saved.ok ? ok(record.task) : saved; }); },
-    async ensureTask(dedupeKey, task) { const normalized = await normalizeTaskForRepo(config.repoPath, task); if (!normalized.ok) return normalized; return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const existing = tasks.value.find(t => t.dedupeKey === dedupeKey); if (existing) return ok(existing.task); const record: TaskRecord = { task: { ...normalized.value, id: randomUUID(), createdAt: new Date().toISOString() }, dedupeKey, status: 'queued', round: 0, startedAt: new Date().toISOString() }; tasks.value.push(record); const saved = await save(path, tasks.value); return saved.ok ? ok(record.task) : saved; }); },
+    async add(task) { const normalized = await normalizeTaskForRepo(config.repoPath, task); if (!normalized.ok) return normalized; return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const record: TaskRecord = { task: { ...normalized.value, type: normalized.value.type ?? 'implement', id: randomUUID(), createdAt: new Date().toISOString() }, status: 'queued', round: 0, startedAt: new Date().toISOString() }; tasks.value.push(record); const saved = await save(path, tasks.value); return saved.ok ? ok(record.task) : saved; }); },
+    async ensureTask(dedupeKey, task) { const normalized = await normalizeTaskForRepo(config.repoPath, task); if (!normalized.ok) return normalized; return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const existing = tasks.value.find(t => t.dedupeKey === dedupeKey); if (existing) return ok(existing.task); const record: TaskRecord = { task: { ...normalized.value, type: normalized.value.type ?? 'implement', id: randomUUID(), createdAt: new Date().toISOString() }, dedupeKey, status: 'queued', round: 0, startedAt: new Date().toISOString() }; tasks.value.push(record); const saved = await save(path, tasks.value); return saved.ok ? ok(record.task) : saved; }); },
     async countByDedupePrefix(prefix) { return withLock(path, async () => { const tasks = await load(path); return tasks.ok ? ok(countByPrefix(tasks.value, prefix)) : tasks; }); },
     async list() { const tasks = await load(path); return tasks.ok ? ok(tasks.value.map(strip)) : tasks; },
   };

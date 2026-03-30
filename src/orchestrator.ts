@@ -15,8 +15,10 @@ import { ok, err, type Result } from './shared/result.js';
 import { finalize } from './core/finalizer.js';
 import { featureBranchName } from './core/feature.js';
 import { logTaskMetrics } from './core/metrics.js';
+import { runResearchTask } from './core/research-task.js';
 import { architectSweep } from './core/sweep.js';
 import { emptyWarmSession, newTaskUsage, pickWarmSession, recordWarmSession, type WarmSessionState } from './core/session-budget.js';
+import { mergeCommittedBranch } from './core/task-merge.js';
 import { runTask } from './core/task-runner.js';
 import { taskBranchName, worktreePathForBranch } from './core/worktree.js';
 
@@ -46,6 +48,14 @@ async function escalate(d: Deps, task: TaskDefinition, reason: string, token: st
   const logged = await logTaskMetrics(d.config, d.queue, task, 'stuck'); if (!logged.ok) console.error(logged.error.message);
   const notice = await notify(d, task.id, `Stuck: ${task.title}`, reason);
   return notice.ok ? ok(false) : notice;
+}
+async function blockDebugTask(d: Deps, task: TaskDefinition, token: string): Promise<Result<boolean>> {
+  const blocked = await d.queue.markBlocked(task.id, 'debug tasks need human intervention', { kind: 'needs-human', command: `agentloop approve ${task.id}` }, token);
+  if (!blocked.ok) return blocked;
+  const logged = await logTaskMetrics(d.config, d.queue, task, 'needs-human'); if (!logged.ok) console.error(logged.error.message);
+  const notice = await notify(d, task.id, `Needs human: ${task.title}`, 'Debug tasks are escalated immediately.');
+  if (!notice.ok) console.error(notice.error.message);
+  return ok(false);
 }
 async function claim(d: Deps): Promise<Result<ClaimedActionableTask | null>> {
   while (true) {
@@ -84,6 +94,10 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: Work
     const released = await d.queue.releaseClaim(state.task.id, claimToken);
     return released.ok ? ok(false) : released;
   }
+  if (state.task.type === 'debug') return blockDebugTask(d, state.task, claimToken);
+  if ((state.task.type === 'implement' || state.task.type === 'integrate') && !d.config.codexEnabled) {
+    return escalate(d, state.task, 'Codex + Opus review requires OPENAI_API_KEY', claimToken);
+  }
   const feature = state.task.feature ? await d.git.createBranch(featureBranchName(state.task.feature), d.config.baseBranch) : null;
   if (feature && !feature.ok) return escalate(d, state.task, feature.error.message, claimToken);
   const base = feature?.value.name ?? d.config.baseBranch;
@@ -95,9 +109,15 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: Work
   if (!checkout.ok) return escalate(d, state.task, checkout.error.message, claimToken);
   const progress = await d.queue.updateProgress(state.task.id, { branch, round: state.round, convergence: state.convergence }, claimToken);
   if (!progress.ok) return progress;
+  if (state.status === 'merging') return mergeCommittedBranch(d.git, d.queue, state.task, branch, base, claimToken).then(r => r.ok ? ok(true) : r);
+  if (state.task.type === 'research') return runResearchTask(d, state.task, branch, worktreePath, claimToken).then(r => r.ok ? ok(false) : r);
   const usage = newTaskUsage();
-  const result = await runTask(d, state.task, branch, base, worktreePath, state.convergence, claimToken, pickWarmSession(worker.warm, state.task.feature), usage, !state.branch);
-  worker.warm = result.ok ? recordWarmSession(worker.warm, state.task.feature, usage.session, usage.tokens, d.config) : emptyWarmSession();
+  const warm = state.task.type === 'integrate' ? undefined : pickWarmSession(worker.warm, state.task.feature);
+  const taskDeps = { ...d, config: { ...d.config, useCodexWriter: true } };
+  const result = await runTask(taskDeps, state.task, branch, base, worktreePath, state.convergence, claimToken, warm, usage, !state.branch);
+  worker.warm = result.ok && state.task.type === 'implement'
+    ? recordWarmSession(worker.warm, state.task.feature, usage.session, usage.tokens, d.config)
+    : emptyWarmSession();
   if (result.ok) return ok(true);
   if (result.error.code === 'FINALIZATION_PERSIST_FAILED') return escalate(d, state.task, result.error.message, claimToken);
   if (result.error.code === 'REVIEW_CONFLICT' || result.error.code === 'REVIEW_STUCK') return ok(false);
@@ -122,7 +142,6 @@ async function runWorker(d: Deps, shared: SharedState): Promise<Result<void>> {
 }
 
 export async function runOrchestrator(deps: Deps): Promise<Result<void>> {
-  if (!deps.config.codexEnabled) return err('CONFIG_ERROR', 'Codex + Opus review is required by ARCHITECTURE.md');
   const shared = { sweepCounter: 0 }, count = Math.max(1, deps.config.maxParallelAgents);
   const results = await Promise.all(Array.from({ length: count }, () => runWorker(deps, shared)));
   const failure = results.find(result => !result.ok);

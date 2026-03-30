@@ -8,6 +8,7 @@ const docTask = (feature: string, delta: InventoryDelta): TaskDefinition => ({
   title: `Update docs for ${feature}`,
   description: `Update AGENTS.md and ARCHITECTURE.md for ${feature}. New modules: ${delta.newModules.join(', ') || 'none'}. New dependencies: ${delta.newDependencies.join(', ') || 'none'}. New env vars: ${delta.newEnvVars.join(', ') || 'none'}. Constraint changes: ${delta.constraintChanges.join('; ') || 'none'}.`,
   feature,
+  type: 'implement',
   scope: { editableFiles: ['AGENTS.md', 'ARCHITECTURE.md'], readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: ['Docs reflect the new modules, dependencies, env vars, and constraints.'],
   model: 'auto',

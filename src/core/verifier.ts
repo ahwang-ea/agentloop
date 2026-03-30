@@ -4,10 +4,10 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { ok, err, type Result } from '../shared/result.js';
-import type { AgentloopConfig, VerifyResult } from '../types/index.js';
+import type { AgentloopConfig, TaskType, VerifyResult } from '../types/index.js';
 
 const exec = promisify(execFile);
-const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
+const quote = (value: string) => `'${value.replace(/'/g, `"'"'`)}'`;
 
 export function truncateVerifyOutput(output: string): string {
   const lines = output.split('\n');
@@ -34,11 +34,17 @@ export async function runVerify(command: string, cwd = process.cwd(), env = proc
   }
 }
 
-export function progressiveVerify(
-  config: AgentloopConfig, changedFiles: string[], cwd: string, mergeMode: boolean,
+async function integrationVerify(config: AgentloopConfig, cwd: string): Promise<Result<VerifyResult>> {
+  return config.integrationTestCommand ? runVerify(config.integrationTestCommand, cwd) : err('CONFIG_ERROR', 'integrationTestCommand is required for integrate tasks');
+}
+
+export async function progressiveVerify(
+  config: AgentloopConfig, changedFiles: string[], cwd: string, mergeMode: boolean, taskType: TaskType = 'implement',
 ): Promise<Result<VerifyResult>> {
   const args = ['--progressive', ...(mergeMode ? ['--merge'] : []), ...changedFiles.map(quote)].join(' ');
-  return runVerify(`${config.verifyCommand} ${args}`.trim(), cwd, mergeMode ? { ...process.env, AGENTLOOP_MERGE_CHECK: '1' } : process.env);
+  const verify = await runVerify(`${config.verifyCommand} ${args}`.trim(), cwd, mergeMode ? { ...process.env, AGENTLOOP_MERGE_CHECK: '1' } : process.env);
+  if (!verify.ok || !verify.value.pass || taskType !== 'integrate') return verify;
+  return integrationVerify(config, cwd);
 }
 
 function parseVerifyOutput(output: string) {

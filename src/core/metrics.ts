@@ -91,6 +91,6 @@ export async function logInferredTaskMetrics(
   if (!state.ok) return state;
   if (state.value.status === 'done') return logMetrics(config, task, 'merged', metricsFromTaskState(state.value));
   if (state.value.status === 'stuck') return logMetrics(config, task, 'stuck', metricsFromTaskState(state.value));
-  if (state.value.status === 'blocked') return logMetrics(config, task, 'blocked', metricsFromTaskState(state.value));
+  if (state.value.status === 'blocked') return logMetrics(config, task, task.type === 'debug' ? 'needs-human' : 'blocked', metricsFromTaskState(state.value));
   return err('CONFIG_ERROR', `Task ${task.id} is not in a terminal state for metrics`);
 }

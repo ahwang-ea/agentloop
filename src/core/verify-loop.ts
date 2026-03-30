@@ -36,8 +36,8 @@ export async function verifyLoop(
   const { convergence: cc } = d.config;
   let lastTokenEstimate = initTokenEstimate, files = lastChangedFiles;
   while (true) {
-    const v = await progressiveVerify(d.config, files, cwd, false);
-    if (!v.ok) return err('VERIFY_FAILED', v.error.message);
+    const v = await progressiveVerify(d.config, files, cwd, false, task.type);
+    if (!v.ok) return err(v.error.code, v.error.message);
     recordVerifyErrors(conv, v.value.errors);
     trackRound(conv, v.value, lastTokenEstimate);
     const sp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!sp.ok) return sp;

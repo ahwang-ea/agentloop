@@ -33,6 +33,7 @@ export async function enqueueInteractiveTask(deps: Deps): Promise<Result<void>> 
       acceptanceCriteria: [],
       model: 'auto',
       priority: 'medium',
+      type: 'implement',
     });
     if (!added.ok) return added;
     console.log(`Queued: ${added.value.title}`);

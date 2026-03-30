@@ -16,6 +16,12 @@ const config = (repoPath: string) => ({
   taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 2, maxTasksPerSession: 3, maxTokensPerSession: 100000, parallelVerify: true, sweepInterval: 1,
 });
 
+test('defaults queued tasks to implement type', async () => {
+  const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-'));
+  const task = await createFileTaskQueue(config(repoPath)).add({ title: 'Feature gate', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium' });
+  expect(task.ok && task.value.type).toBe('implement');
+});
+
 test('approves blocked finalization tasks back into finalizing', async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-'));
   const queue = createFileTaskQueue(config(repoPath));
@@ -40,17 +46,46 @@ test('approves blocked finalization tasks back into finalizing', async () => {
   expect(raw[0].finalization?.approved).toBe(true);
 });
 
+test('approves research blocks into merging and claims them as merging', async () => {
+  const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-research-'));
+  const taskFile = join(repoPath, 'tasks.json');
+  await writeFile(taskFile, JSON.stringify([{
+    task: { id: 'r', title: 'Research payment adapter', description: '', type: 'research', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium', createdAt: '' },
+    status: 'blocked', round: 0, startedAt: '', branch: 'al/research-payment', blocked: { reason: 'awaiting human approval of research output', details: { kind: 'research-approval' }, blockedAt: '2026-03-18T00:05:00.000Z' },
+  }], null, 2));
+  const queue = createFileTaskQueue(config(repoPath));
+  const approved = await queue.approveBlocked('r');
+  expect(approved.ok).toBe(true);
+  const claimed = await queue.claimNextActionable(1);
+  expect(claimed.ok && claimed.value?.state.status).toBe('merging');
+});
+
+test('approves other blocked tasks by requeueing them', async () => {
+  const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-requeue-'));
+  const taskFile = join(repoPath, 'tasks.json');
+  await writeFile(taskFile, JSON.stringify([{
+    task: { id: 'b', title: 'Blocked', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium', createdAt: '' },
+    status: 'blocked', round: 2, startedAt: '', blocked: { reason: 'Need manual input', details: {}, blockedAt: '2026-03-18T00:05:00.000Z' },
+  }], null, 2));
+  const queue = createFileTaskQueue(config(repoPath));
+  const approved = await queue.approveBlocked('b');
+  expect(approved.ok).toBe(true);
+  const raw = JSON.parse(await readFile(taskFile, 'utf-8')) as Array<{ status: string; round: number }>;
+  expect(raw[0].status).toBe('queued');
+  expect(raw[0].round).toBe(0);
+});
+
 test('claims only one finalizing task at a time', async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-finalizing-'));
   const taskFile = join(repoPath, 'tasks.json');
   await writeFile(taskFile, JSON.stringify([
     {
-      task: { id: 'a', title: 'A', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium', createdAt: '' },
+      task: { id: 'a', title: 'A', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium', createdAt: '' },
       status: 'finalizing', round: 0, startedAt: '', finalization: { mergeCommit: 'a', branch: 'al/a', mergeInto: 'main', behaviorNotified: false, readmeTaskEnsured: false, completionNotified: false, rebaseDone: false, failCount: 0 },
       claim: { token: 'held', expiresAt: new Date(Date.now() + 60_000).toISOString() },
     },
     {
-      task: { id: 'b', title: 'B', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium', createdAt: '' },
+      task: { id: 'b', title: 'B', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], model: 'auto', priority: 'medium', createdAt: '' },
       status: 'finalizing', round: 0, startedAt: '', finalization: { mergeCommit: 'b', branch: 'al/b', mergeInto: 'main', behaviorNotified: false, readmeTaskEnsured: false, completionNotified: false, rebaseDone: false, failCount: 0 },
     },
   ], null, 2));

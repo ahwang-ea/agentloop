@@ -65,7 +65,7 @@ test('runs Codex detail review before Claude sweep', async () => {
   await writeFile(agents, '# agents\n', 'utf-8');
   await writeFile(arch, '# architecture\n', 'utf-8');
   const order: string[] = [];
-  const task = { id: 't', title: 'Task', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium' as const, createdAt: '' };
+  const task = { id: 't', title: 'Task', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], type: 'implement' as const, priority: 'medium' as const, createdAt: '' };
   const codexReview = async (request: ReviewRequest) => {
     order.push(request.role);
     return ok({ reviewer: request.role, findings: [], duration: 1, rawOutput: '{}' });

@@ -8,8 +8,9 @@ import type {
   ReviewFinding,
   ReviewRequest,
   ReviewResult,
-  TaskDefinition,
   ScaffoldOutput,
+  TaskDefinition,
+  TaskInput,
   TaskState,
   TaskStatus,
 } from './domain.js';
@@ -62,7 +63,7 @@ export interface GitAdapter {
 
 export interface NotifierAdapter { send(notification: Notification): Promise<Result<void>>; }
 export type ActionableTaskState =
-  | ({ status: 'writing'; task: TaskDefinition } & Pick<TaskState, 'branch' | 'round' | 'convergence'>)
+  | ({ status: 'writing' | 'merging'; task: TaskDefinition } & Pick<TaskState, 'branch' | 'round' | 'convergence'>)
   | { status: 'finalizing'; task: TaskDefinition; finalization: FinalizationState };
 export interface ClaimedActionableTask { state: ActionableTaskState; claimToken: string; }
 
@@ -79,8 +80,8 @@ export interface TaskQueueAdapter {
   requeueBlocked(taskId: string): Promise<Result<void>>;
   approveBlocked(taskId: string): Promise<Result<void>>;
   releaseClaim(taskId: string, claimToken: string): Promise<Result<void>>;
-  add(task: Omit<TaskDefinition, 'id' | 'createdAt'>): Promise<Result<TaskDefinition>>;
-  ensureTask(dedupeKey: string, task: Omit<TaskDefinition, 'id' | 'createdAt'>): Promise<Result<TaskDefinition>>;
+  add(task: TaskInput): Promise<Result<TaskDefinition>>;
+  ensureTask(dedupeKey: string, task: TaskInput): Promise<Result<TaskDefinition>>;
   countByDedupePrefix(prefix: string): Promise<Result<number>>;
   list(): Promise<Result<TaskState[]>>;
 }

@@ -23,7 +23,7 @@ const sweepTask = (title: string, description: string, editableFiles: string[]) 
   description,
   scope: { editableFiles, readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: [],
-  model: 'auto' as const,
+  model: 'auto' as const, type: 'implement' as const,
   priority: 'low' as const,
 });
 

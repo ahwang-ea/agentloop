@@ -4,10 +4,11 @@ import type { ConvergenceConfig } from './domain.js';
 
 export interface AgentloopConfig {
   repoPath: string;
-  baseBranch: string;              // Configurable — not hard-coded to 'main'
+  baseBranch: string;
   branchPrefix: string;
   worktreeRoot: string;
   verifyCommand: string;
+  integrationTestCommand?: string;
   agentsMdPath: string;
   architectureMdPath?: string;
   claudeModel: string;
