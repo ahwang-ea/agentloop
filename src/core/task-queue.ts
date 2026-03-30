@@ -16,6 +16,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const pathOf = (c: AgentloopConfig) => isAbsolute(c.taskFilePath ?? 'tasks.json') ? c.taskFilePath! : join(c.repoPath, c.taskFilePath ?? 'tasks.json');
 const expired = (claim?: Lease) => !claim || Date.parse(claim.expiresAt) <= Date.now();
 const strip = ({ claim: _c, dedupeKey: _d, ...task }: TaskRecord): TaskState => task;
+const countByPrefix = (tasks: TaskRecord[], prefix: string) => tasks.filter(task => task.dedupeKey?.startsWith(prefix) && task.status !== 'done' && task.status !== 'stuck').length;
 
 async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise<Result<T>> {
   const lock = `${path}.lock`;
@@ -101,6 +102,7 @@ export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
     async releaseClaim(taskId, claimToken) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = withClaim(tasks.value, taskId, claimToken); if (!task.ok) return task; task.value.claim = undefined; return save(path, tasks.value); }); },
     async add(task) { const normalized = await normalizeTaskForRepo(config.repoPath, task); if (!normalized.ok) return normalized; return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const record: TaskRecord = { task: { ...normalized.value, id: randomUUID(), createdAt: new Date().toISOString() }, status: 'queued', round: 0, startedAt: new Date().toISOString() }; tasks.value.push(record); const saved = await save(path, tasks.value); return saved.ok ? ok(record.task) : saved; }); },
     async ensureTask(dedupeKey, task) { const normalized = await normalizeTaskForRepo(config.repoPath, task); if (!normalized.ok) return normalized; return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const existing = tasks.value.find(t => t.dedupeKey === dedupeKey); if (existing) return ok(existing.task); const record: TaskRecord = { task: { ...normalized.value, id: randomUUID(), createdAt: new Date().toISOString() }, dedupeKey, status: 'queued', round: 0, startedAt: new Date().toISOString() }; tasks.value.push(record); const saved = await save(path, tasks.value); return saved.ok ? ok(record.task) : saved; }); },
+    async countByDedupePrefix(prefix) { return withLock(path, async () => { const tasks = await load(path); return tasks.ok ? ok(countByPrefix(tasks.value, prefix)) : tasks; }); },
     async list() { const tasks = await load(path); return tasks.ok ? ok(tasks.value.map(strip)) : tasks; },
   };
 }

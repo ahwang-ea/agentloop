@@ -58,7 +58,6 @@ export type ActionableTaskState =
 export interface ClaimedActionableTask { state: ActionableTaskState; claimToken: string; }
 
 export interface TaskQueueAdapter {
-  /** Claims queued work, expired active pre-merge work as `writing` with persisted progress, or finalizing retries. */
   claimNextActionable(maxParallelAgents: number): Promise<Result<ClaimedActionableTask | null>>;
   renewClaim(taskId: string, claimToken: string): Promise<Result<void>>;
   updateStatus(taskId: string, status: TaskStatus, claimToken: string): Promise<Result<void>>;
@@ -73,6 +72,7 @@ export interface TaskQueueAdapter {
   releaseClaim(taskId: string, claimToken: string): Promise<Result<void>>;
   add(task: Omit<TaskDefinition, 'id' | 'createdAt'>): Promise<Result<TaskDefinition>>;
   ensureTask(dedupeKey: string, task: Omit<TaskDefinition, 'id' | 'createdAt'>): Promise<Result<TaskDefinition>>;
+  countByDedupePrefix(prefix: string): Promise<Result<number>>;
   list(): Promise<Result<TaskState[]>>;
 }
 
