@@ -56,7 +56,19 @@ test('writes proposal on every twentieth task and notifies', async () => {
   expect(await readFile(join(repoPath, '.agentloop', 'proposed-agents-update.md'), 'utf-8')).toContain('AGENTS.md');
 });
 
-test('rejects proposals that exceed the AGENTS line cap', async () => {
+test('retries oversized proposals before failing the cap check', async () => {
+  const repoPath = await repo();
+  await writeMetrics(repoPath, 20);
+  await writeFile(join(repoPath, 'AGENTS.md'), `${Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n')}\n`, 'utf-8');
+  let calls = 0;
+  const proposed = await maybeProposeAgentsUpdate(config(repoPath), {
+    chat: async () => ok({ text: ++calls === 1 ? '--- AGENTS.md\n+++ AGENTS.md\n@@\n+# New rule' : '--- AGENTS.md\n+++ AGENTS.md\n@@\n-line 100', tokensDelta: 0, changedFiles: [], stopReason: 'end_turn' }),
+  }, { send: async () => ok(undefined) });
+  expect(proposed.ok && proposed.value).toBe(true);
+  expect(calls).toBe(2);
+});
+
+test('rejects proposals that still exceed the AGENTS line cap', async () => {
   const repoPath = await repo();
   await writeMetrics(repoPath, 20);
   await writeFile(join(repoPath, 'AGENTS.md'), `${Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n')}\n`, 'utf-8');

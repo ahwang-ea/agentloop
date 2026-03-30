@@ -15,10 +15,20 @@ const labelOf = (pattern: string) => pattern.replace(/_/g, ' ').replace(/\s+/g, 
 const keyOf = (item: Pick<LearningEntry, 'pattern' | 'module'>) => `${item.pattern}::${item.module}`;
 const byValue = (a: LearningEntry, b: LearningEntry) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen) || a.pattern.localeCompare(b.pattern);
 const addendum = (items: LearningEntry[]) => items.length === 0 ? '' : ['Common mistakes in this area:', ...items.map(item => `- ${item.pattern} (seen ${item.count} times)`)].join('\n');
-const lineCount = (text: string) => {
-  const trimmed = text.replace(/\n$/, '');
-  return trimmed ? trimmed.split('\n').length : 0;
-};
+const lineCount = (text: string) => (text.replace(/\n$/, '') || '').split('\n').filter(Boolean).length;
+const proposalPrompt = (agentsMd: string, entries: MetricsRecord[], retry?: string) => [
+  'Propose a unified diff against the current AGENTS.md based on the recent task metrics.',
+  'Return ONLY the diff. Keep the resulting AGENTS.md under 100 lines.',
+  'For each proposed rule, prefer a lint rule, test helper, or type constraint over prose when possible.',
+  'If adding a rule would exceed 100 lines, remove the least-valuable existing rule in the diff.',
+  retry ?? '',
+  '',
+  'Current AGENTS.md:',
+  agentsMd,
+  '',
+  'Recent metrics (last 20):',
+  JSON.stringify(entries, null, 2),
+].filter(Boolean).join('\n');
 
 async function readJson<T>(path: string, fallback: T): Promise<Result<T>> {
   try { return ok(JSON.parse(await readFile(path, 'utf-8')) as T); }
@@ -42,13 +52,7 @@ function aggregate(entries: MetricsRecord[]): LearningEntry[] {
     const modules = [...new Set((entry.files.length === 0 ? ['general'] : entry.files.map(moduleOf)))];
     for (const pattern of [...new Set(entry.errors.map(labelOf))]) for (const module of modules) {
       const key = `${pattern}::${module}`, seen = entry.timestamp.slice(0, 10), prev = learnings.get(key);
-      learnings.set(key, {
-        pattern,
-        module,
-        count: (prev?.count ?? 0) + 1,
-        lastSeen: prev && prev.lastSeen > seen ? prev.lastSeen : seen,
-        suggestion: `Add targeted tests or constraints to prevent ${pattern} in ${module}.`,
-      });
+      learnings.set(key, { pattern, module, count: (prev?.count ?? 0) + 1, lastSeen: prev && prev.lastSeen > seen ? prev.lastSeen : seen, suggestion: `Add targeted tests or constraints to prevent ${pattern} in ${module}.` });
     }
   }
   return [...learnings.values()].sort(byValue).slice(0, 10);
@@ -63,11 +67,14 @@ function projectedLines(current: string, diff: string): Result<number> {
   }
   return ok(total);
 }
+async function requestProposal(claude: Pick<ClaudeAdapter, 'chat'>, agentsMd: string, entries: MetricsRecord[], retry?: string): Promise<Result<string>> {
+  const response = await claude.chat(proposalPrompt(agentsMd, entries, retry)); if (!response.ok) return response;
+  return response.value.text.trim() ? ok(response.value.text.trim()) : err('EMPTY_RESPONSE', 'Claude returned no AGENTS.md proposal');
+}
 
 export async function syncLearnings(config: Pick<AgentloopConfig, 'repoPath'>): Promise<Result<LearningEntry[]>> {
   const recent = await recentMetrics(config); if (!recent.ok) return recent;
-  const next = aggregate(recent.value.entries);
-  const target = pathOf(config, 'learnings.json');
+  const next = aggregate(recent.value.entries), target = pathOf(config, 'learnings.json');
   const current = await readText(target); if (!current.ok) return current;
   const serialized = JSON.stringify(next, null, 2);
   if (current.value.trim() === serialized.trim()) return ok(next);
@@ -75,9 +82,7 @@ export async function syncLearnings(config: Pick<AgentloopConfig, 'repoPath'>): 
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, serialized, 'utf-8');
     return ok(next);
-  } catch {
-    return err('TRANSPORT_ERROR', 'Cannot write learnings.json');
-  }
+  } catch { return err('TRANSPORT_ERROR', 'Cannot write learnings.json'); }
 }
 
 export async function learningsAddendum(config: Pick<AgentloopConfig, 'repoPath'>, task: TaskDefinition): Promise<Result<string>> {
@@ -94,36 +99,20 @@ export async function maybeProposeAgentsUpdate(
   const existing = await readText(proposal); if (!existing.ok) return existing;
   if (existing.value.trim()) return ok(false);
   const agentsMd = await readText(agentsPath(config)); if (!agentsMd.ok) return err('TRANSPORT_ERROR', 'Cannot read AGENTS.md for proposal generation');
-  const prompt = [
-    'Propose a unified diff against the current AGENTS.md based on the recent task metrics.',
-    'Return ONLY the diff. Keep the resulting AGENTS.md under 100 lines.',
-    'For each proposed rule, prefer a lint rule, test helper, or type constraint over prose when possible.',
-    'If adding a rule would exceed 100 lines, remove the least-valuable existing rule in the diff.',
-    '',
-    'Current AGENTS.md:',
-    agentsMd.value,
-    '',
-    'Recent metrics (last 20):',
-    JSON.stringify(recent.value.entries, null, 2),
-  ].join('\n');
-  const response = await claude.chat(prompt); if (!response.ok) return response;
-  const diff = response.value.text.trim();
-  if (!diff) return err('EMPTY_RESPONSE', 'Claude returned no AGENTS.md proposal');
-  const projected = projectedLines(agentsMd.value, diff); if (!projected.ok) return projected;
+  let diff = await requestProposal(claude, agentsMd.value, recent.value.entries); if (!diff.ok) return diff;
+  let projected = projectedLines(agentsMd.value, diff.value);
+  if (!projected.ok || projected.value > 100) {
+    const note = `The previous diff was invalid or projected ${projected.ok ? projected.value : 'too many'} lines. Rewrite it as a unified diff against AGENTS.md that keeps the result at 100 lines or fewer by removing the least-valuable existing rule if needed.\n\nPrevious diff:\n${diff.value}`;
+    diff = await requestProposal(claude, agentsMd.value, recent.value.entries, note); if (!diff.ok) return diff;
+    projected = projectedLines(agentsMd.value, diff.value);
+  }
+  if (!projected.ok) return projected;
   if (projected.value > 100) return err('CONFIG_ERROR', `Proposed AGENTS.md update exceeds 100 lines (${projected.value})`);
   try {
     await mkdir(dirname(proposal), { recursive: true });
-    await writeFile(proposal, diff, 'utf-8');
-  } catch {
-    return err('TRANSPORT_ERROR', 'Cannot write proposed-agents-update.md');
-  }
-  const sent = await notifier.send({
-    type: 'promotion-ready',
-    summary: 'AGENTS.md update proposed. Review in repo.',
-    details: `Review ${proposal}`,
-    timestamp: new Date().toISOString(),
-    idempotencyKey: `agents-proposal:${recent.value.total}`,
-  });
+    await writeFile(proposal, diff.value, 'utf-8');
+  } catch { return err('TRANSPORT_ERROR', 'Cannot write proposed-agents-update.md'); }
+  const sent = await notifier.send({ type: 'promotion-ready', summary: 'AGENTS.md update proposed. Review in repo.', details: `Review ${proposal}`, timestamp: new Date().toISOString(), idempotencyKey: `agents-proposal:${recent.value.total}` });
   return sent.ok ? ok(true) : sent;
 }
 
