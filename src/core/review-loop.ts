@@ -2,32 +2,25 @@
 
 import { ok, err, type Result } from '../shared/result.js';
 import type {
-  AgentloopConfig,
-  ClaudeAdapter,
   ClaudeSession,
   CodexAdapter,
-  CodexWriterAdapter,
   ConvergenceState,
-  GitAdapter,
+  NotifierAdapter,
   ReviewFinding,
   TaskDefinition,
-  TaskQueueAdapter,
   TaskStatus,
 } from '../types/index.js';
+import { refreshLearnings } from './learnings.js';
 import { withLease } from './lease.js';
 import { logTaskMetrics, recordReviewFindings, recordSessionChanges } from './metrics.js';
 import { formatFixPrompt, resolveConflicts, runSequentialReviews } from './reviewer.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { verifyLoop, type VerifyDeps } from './verify-loop.js';
-import { runWriterFix, type WriterDeps } from './writer.js';
+import { runWriterFix } from './writer.js';
 
-interface ReviewDeps extends VerifyDeps, WriterDeps {
-  claude: ClaudeAdapter;
+interface ReviewDeps extends VerifyDeps {
   codex: CodexAdapter;
-  codexWriter: CodexWriterAdapter;
-  git: GitAdapter;
-  queue: TaskQueueAdapter;
-  config: AgentloopConfig;
+  notifier: NotifierAdapter;
 }
 interface ReviewPass { count: number; hashes: string[]; }
 
@@ -35,10 +28,17 @@ const setStatus = (d: ReviewDeps, id: string, s: TaskStatus, token: string) => d
 const hashFinding = (f: ReviewFinding) => [f.severity, f.reviewer, f.topicKey ?? '', f.action ?? '', f.file ?? '', f.line ?? '', f.description.trim().toLowerCase()].join(':');
 const improved = (prev: string[], next: string[]) => {
   const prevSet = new Set(prev), nextSet = new Set(next);
-  const resolved = prev.filter(h => !nextSet.has(h)).length;
-  const introduced = next.filter(h => !prevSet.has(h)).length;
+  const resolved = prev.filter(hash => !nextSet.has(hash)).length;
+  const introduced = next.filter(hash => !prevSet.has(hash)).length;
   return next.length < prev.length || (resolved > 0 && resolved >= introduced);
 };
+
+async function syncBlocked(d: ReviewDeps, task: TaskDefinition): Promise<void> {
+  const logged = await logTaskMetrics(d.config, d.queue, task, 'blocked');
+  if (!logged.ok) return void console.error(logged.error.message);
+  const learned = await refreshLearnings(d.config, d.claude, d.notifier);
+  if (!learned.ok) console.error(learned.error.message);
+}
 
 async function singleReviewPass(
   d: ReviewDeps, session: ClaudeSession | undefined, task: TaskDefinition,
@@ -51,14 +51,14 @@ async function singleReviewPass(
   recordReviewFindings(conv, findings);
   const progress = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!progress.ok) return progress;
   const resolved = resolveConflicts(findings); if (!resolved.ok) return resolved as Result<never>;
-  const sf = await setStatus(d, task.id, 'fixing', token); if (!sf.ok) return sf as Result<never>;
+  const fixing = await setStatus(d, task.id, 'fixing', token); if (!fixing.ok) return fixing as Result<never>;
   const fix = await withLease(() => runWriterFix(d, session, task, formatFixPrompt(resolved.value), cwd), () => d.queue.renewClaim(task.id, token));
   if (!fix.ok) return err(fix.error.code, fix.error.message);
   addTaskTokens(usage, fix.value.tokenEstimate);
   recordSessionChanges(conv, fix.value.changedFiles);
   const saved = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!saved.ok) return saved;
-  const vl = await verifyLoop(d, session, task, fix.value.tokenEstimate, fix.value.changedFiles, conv, t0, cwd, token, usage); if (!vl.ok) return vl as Result<never>;
-  return ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() });
+  const verified = await verifyLoop(d, session, task, fix.value.tokenEstimate, fix.value.changedFiles, conv, t0, cwd, token, usage);
+  return verified.ok ? ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() }) : verified;
 }
 
 export async function reviewPhase(
@@ -69,25 +69,25 @@ export async function reviewPhase(
   const stallLimit = Math.max(1, d.config.convergence.stuckThreshold - 1);
   while (true) {
     if ((Date.now() - t0) / 1000 > d.config.convergence.maxWallClock) return err('BUDGET_EXCEEDED', 'Review wall clock exceeded');
-    const r = await singleReviewPass(d, session, task, conv, t0, cwd, token, usage);
-    if (!r.ok) {
-      if (r.error.code === 'REVIEW_CONFLICT') {
-        const mb = await d.queue.markBlocked(task.id, r.error.message, r.error.details ?? {}, token);
-        if (!mb.ok) return mb;
-        const logged = await logTaskMetrics(d.config, d.queue, task, 'blocked'); if (!logged.ok) console.error(logged.error.message);
+    const result = await singleReviewPass(d, session, task, conv, t0, cwd, token, usage);
+    if (!result.ok) {
+      if (result.error.code === 'REVIEW_CONFLICT') {
+        const blocked = await d.queue.markBlocked(task.id, result.error.message, result.error.details ?? {}, token);
+        if (!blocked.ok) return blocked;
+        await syncBlocked(d, task);
       }
-      return r as Result<never>;
+      return result as Result<never>;
     }
-    if (r.value.count === 0) return ok(undefined);
-    stalled = prev && !improved(prev, r.value.hashes) ? stalled + 1 : 0;
+    if (result.value.count === 0) return ok(undefined);
+    stalled = prev && !improved(prev, result.value.hashes) ? stalled + 1 : 0;
     if (stalled >= stallLimit) {
       const reason = `Review findings stopped converging after ${stallLimit + 1} passes`;
-      const mb = await d.queue.markBlocked(task.id, reason, { findings: r.value.hashes }, token);
-      if (!mb.ok) return mb;
-      const logged = await logTaskMetrics(d.config, d.queue, task, 'blocked'); if (!logged.ok) console.error(logged.error.message);
-      return err('REVIEW_STUCK', reason, { findings: r.value.hashes });
+      const blocked = await d.queue.markBlocked(task.id, reason, { findings: result.value.hashes }, token);
+      if (!blocked.ok) return blocked;
+      await syncBlocked(d, task);
+      return err('REVIEW_STUCK', reason, { findings: result.value.hashes });
     }
-    prev = r.value.hashes;
-    const s = await setStatus(d, task.id, 'reviewing', token); if (!s.ok) return s;
+    prev = result.value.hashes;
+    const reviewing = await setStatus(d, task.id, 'reviewing', token); if (!reviewing.ok) return reviewing;
   }
 }

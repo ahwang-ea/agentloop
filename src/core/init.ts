@@ -68,6 +68,7 @@ export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
     copyOnce(asset('templates', '.claude', 'commands', 'recent.md'), join(repoPath, '.claude', 'commands', 'recent.md'), summary),
     copyOnce(asset('templates', '.claude', 'commands', 'metrics.md'), join(repoPath, '.claude', 'commands', 'metrics.md'), summary),
     copyOnce(asset('templates', '.claude', 'commands', 'approve.md'), join(repoPath, '.claude', 'commands', 'approve.md'), summary),
+    copyOnce(asset('templates', '.claude', 'commands', 'review-agents-update.md'), join(repoPath, '.claude', 'commands', 'review-agents-update.md'), summary),
     copyOnce(asset('hooks', 'scope-check.py'), join(repoPath, '.agentloop', 'hooks', 'scope-check.py'), summary, 0o755),
     copyOnce(asset('hooks', 'on-stop.py'), join(repoPath, '.agentloop', 'hooks', 'on-stop.py'), summary, 0o755),
     writeOnce(join(repoPath, '.agentloop', 'current-scope.json'), JSON.stringify({ editableFiles: ['**/*'], readOnlyContext: [], forbiddenFiles: [] }, null, 2), summary),

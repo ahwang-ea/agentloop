@@ -104,6 +104,7 @@ export interface MetricsRecord extends TaskMetricsStats {
   task: string;
   outcome: MetricsOutcome;
 }
+export interface LearningEntry { pattern: string; module: string; count: number; lastSeen: string; suggestion: string; }
 
 export interface InventoryFile { path: string; lines: number; }
 export interface InventoryPackage { name: string; path: string; }

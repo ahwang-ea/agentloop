@@ -5,6 +5,7 @@ export const cleanupPrompt = 'Do a final cleanup pass. Remove obvious dead code 
 const researchPrompt = (task: TaskDefinition) => [
   `Research this task: ${task.title}`,
   task.description,
+  'Read ARCHITECTURE.md before deciding on interfaces or packages.',
   'Produce only research artifacts:',
   '- An interface-only adapter file under src/adapters/',
   '- Research notes under .agentloop/research/',

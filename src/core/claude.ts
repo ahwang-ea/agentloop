@@ -26,19 +26,7 @@ async function runTurn(
   let text = '', tokensDelta = 0, sessionId = resume ?? '', hookStop = false;
   const changedFiles = new Set<string>();
   try {
-    for await (const message of query({
-      prompt,
-      options: {
-        cwd,
-        env: appEnv,
-        maxTurns: mode === 'readonly' ? 10 : 40,
-        model: config.claudeModel,
-        permissionMode: mode === 'readonly' ? 'dontAsk' : 'acceptEdits',
-        settingSources: ['project'],
-        tools: tools(mode),
-        resume,
-      },
-    })) {
+    for await (const message of query({ prompt, options: { cwd, env: appEnv, maxTurns: mode === 'readonly' ? 10 : 40, model: config.claudeModel, permissionMode: mode === 'readonly' ? 'dontAsk' : 'acceptEdits', settingSources: ['project'], tools: tools(mode), resume } })) {
       if (message.type === 'system' && message.subtype === 'files_persisted') message.files.forEach(file => changedFiles.add(file.filename));
       if (message.type === 'system' && message.subtype === 'hook_response' && message.hook_event === 'Stop') hookStop = true;
       if (message.type !== 'result') continue;
@@ -48,9 +36,7 @@ async function runTurn(
       text = message.result;
       return ok({ text, tokensDelta, changedFiles: [...changedFiles], stopReason: stopReason(message.stop_reason, hookStop), sessionId });
     }
-  } catch (e) {
-    return err('SESSION_ERROR', `Claude query failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-  }
+  } catch (e) { return err('SESSION_ERROR', `Claude query failed: ${e instanceof Error ? e.message : 'unknown error'}`); }
   return err('EMPTY_RESPONSE', 'Claude query returned no result');
 }
 
@@ -63,14 +49,15 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
     return ok({ text: turn.value.text, changedFiles: turn.value.changedFiles, tokenEstimate: turn.value.tokensDelta });
   };
   return {
-    async startSession(task, cwd, reuse) {
+    async startSession(task, cwd, reuse, prompt) {
       const stored = reuse ? sessions.get(reuse.id) : undefined;
+      const initialPrompt = prompt ?? buildWritePrompt(task);
       if (stored && reuse) {
-        Object.assign(stored, { initialPrompt: buildWritePrompt(task), cwd, taskId: task.id, mode: task.type === 'research' ? 'research' : 'write' });
+        Object.assign(stored, { initialPrompt, cwd, taskId: task.id, mode: task.type === 'research' ? 'research' : 'write' });
         return ok({ id: reuse.id, taskId: task.id });
       }
       const id = randomUUID();
-      sessions.set(id, { initialPrompt: buildWritePrompt(task), cwd, taskId: task.id, mode: task.type === 'research' ? 'research' : 'write' });
+      sessions.set(id, { initialPrompt, cwd, taskId: task.id, mode: task.type === 'research' ? 'research' : 'write' });
       return ok({ id, taskId: task.id });
     },
     async waitForStop(session) {

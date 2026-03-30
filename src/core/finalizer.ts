@@ -10,6 +10,7 @@ import { detectBehaviorChanges } from './behavior.js';
 import { prepareFeatureFinalization } from './feature-gate.js';
 import { gc } from './gc.js';
 import { runIntentCheck } from './intent-check.js';
+import { refreshLearnings } from './learnings.js';
 import { logInferredTaskMetrics, logTaskMetrics } from './metrics.js';
 
 interface FinalizeDeps {
@@ -38,6 +39,7 @@ export async function finalize(
     if (!feature.ok) return feature;
     if (feature.value === 'done') {
       const logged = await logInferredTaskMetrics(d.config, d.queue, task); if (!logged.ok) console.error(logged.error.message);
+      else { const learned = await refreshLearnings(d.config, d.claude, d.notifier); if (!learned.ok) console.error(learned.error.message); }
       const tasks = await d.queue.list();
       if (!tasks.ok) console.error(tasks.error.message);
       if (tasks.ok && tasks.value.find(item => item.task.id === task.id)?.status === 'done') await gc(d, task, fin);
@@ -98,6 +100,7 @@ export async function finalize(
   const done = await d.queue.markDone(task.id, token);
   if (!done.ok) return done;
   const logged = await logTaskMetrics(d.config, d.queue, task, 'merged'); if (!logged.ok) console.error(logged.error.message);
+  else { const learned = await refreshLearnings(d.config, d.claude, d.notifier); if (!learned.ok) console.error(learned.error.message); }
   await gc(d, task, fin);
   return ok(undefined);
 }

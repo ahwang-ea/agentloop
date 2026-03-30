@@ -8,6 +8,7 @@ import type {
   TaskDefinition,
   WriterOutput,
 } from '../types/index.js';
+import { learningsAddendum } from './learnings.js';
 import { checkScope } from './scope.js';
 import { buildWritePrompt, cleanupPrompt } from './writer-prompt.js';
 
@@ -15,10 +16,14 @@ export interface WriterDeps {
   claude: ClaudeAdapter;
   codexWriter: CodexWriterAdapter;
   git: GitAdapter;
-  config: Pick<AgentloopConfig, 'useCodexWriter'>;
+  config: Pick<AgentloopConfig, 'repoPath' | 'useCodexWriter'>;
 }
 export interface StartedWrite { session?: ClaudeSession; output: WriterOutput; }
 const invalid = (output: WriterOutput) => !output.text.trim() && output.changedFiles.length === 0;
+const promptOf = async (repoPath: string, task: TaskDefinition) => {
+  const learnings = await learningsAddendum({ repoPath }, task);
+  return learnings.ok && learnings.value ? `${buildWritePrompt(task)}\n\n${learnings.value}` : buildWritePrompt(task);
+};
 
 async function enforceScope(d: WriterDeps, task: TaskDefinition, cwd: string, output: WriterOutput): Promise<Result<WriterOutput>> {
   if (!d.config.useCodexWriter) return ok(output);
@@ -37,12 +42,13 @@ const checked = async (d: WriterDeps, task: TaskDefinition, cwd: string, result:
 export async function startWrite(
   d: WriterDeps, task: TaskDefinition, cwd: string, warmSession?: ClaudeSession,
 ): Promise<Result<StartedWrite>> {
+  const prompt = await promptOf(d.config.repoPath, task);
   if (!d.config.useCodexWriter) {
-    const session = await d.claude.startSession(task, cwd, warmSession); if (!session.ok) return session;
+    const session = await d.claude.startSession(task, cwd, warmSession, prompt); if (!session.ok) return session;
     const output = await checked(d, task, cwd, await d.claude.waitForStop(session.value));
     return output.ok ? ok({ session: session.value, output: output.value }) : output;
   }
-  const output = await checked(d, task, cwd, await d.codexWriter.write(buildWritePrompt(task), cwd));
+  const output = await checked(d, task, cwd, await d.codexWriter.write(prompt, cwd));
   return output.ok ? ok({ output: output.value }) : output;
 }
 export async function runWriterFix(

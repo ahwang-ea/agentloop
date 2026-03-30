@@ -29,7 +29,7 @@ export interface SessionOutput {
 export interface ClaudeSession { id: string; taskId: string; }
 
 export interface ClaudeAdapter {
-  startSession(task: TaskDefinition, cwd: string, reuse?: ClaudeSession): Promise<Result<ClaudeSession>>;
+  startSession(task: TaskDefinition, cwd: string, reuse?: ClaudeSession, prompt?: string): Promise<Result<ClaudeSession>>;
   waitForStop(session: ClaudeSession): Promise<Result<WriterOutput>>;
   fix(session: ClaudeSession, errors: string): Promise<Result<WriterOutput>>;
   cleanup(session: ClaudeSession): Promise<Result<WriterOutput>>;
