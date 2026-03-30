@@ -1,7 +1,7 @@
 import type { ClaudeSession, ConvergenceState, TaskDefinition } from '../types/index.js';
 import type { Deps } from '../orchestrator.js';
 import { ok, err, type Result } from '../shared/result.js';
-import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
+import { recordErrorType, recordSessionChanges, recordVerifyErrors } from './metrics.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { withLease } from './lease.js';
 import { reviewPhase } from './review-loop.js';
@@ -17,15 +17,20 @@ export async function runTask(
 ): Promise<Result<void>> {
   const conv = seed ?? { rounds: [], classification: 'unknown' as const, webSearchTriggered: false, reviewFindings: 0, errorTypes: [], changedFiles: [] };
   const t0 = Date.now();
-  const scaffolded = shouldScaffold
+  const scaffold = shouldScaffold
     ? await withLease(() => scaffoldTask(d.claude, task, worktreePath), () => d.queue.renewClaim(task.id, token))
     : ok([]);
-  if (!scaffolded.ok) return scaffolded;
+  if (!scaffold.ok) {
+    recordErrorType(conv, `scaffold ${scaffold.error.message}`);
+    console.error(`Scaffold skipped: ${scaffold.error.message}`);
+    const progress = await d.queue.updateProgress(task.id, { branch, round: conv.rounds.length, convergence: conv }, token); if (!progress.ok) return progress;
+  }
+  const scaffolded = scaffold.ok ? scaffold.value : [];
   const started = await withLease(() => startWrite(d, task, worktreePath, warmSession), () => d.queue.renewClaim(task.id, token));
   if (!started.ok) return err(started.error.code, started.error.message);
   usage.session = started.value.session;
   addTaskTokens(usage, started.value.output.tokenEstimate);
-  const initialFiles = [...new Set([...scaffolded.value, ...started.value.output.changedFiles])];
+  const initialFiles = [...new Set([...scaffolded, ...started.value.output.changedFiles])];
   recordSessionChanges(conv, initialFiles);
   let p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   let s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;

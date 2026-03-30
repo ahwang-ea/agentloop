@@ -1,9 +1,8 @@
 // core/git.ts — Git CLI adapter implementation.
-
 import { execFile } from 'node:child_process';
 import { access, mkdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, BranchState, GitAdapter } from '../types/index.js';
@@ -38,8 +37,15 @@ export function createGitAdapter(config: AgentloopConfig): GitAdapter {
     try { return ok(lines((await exec('git', args, { cwd })).stdout)); }
     catch (e) { return /did not match any file/.test(text(e)) ? ok([]) : err('GIT_ERROR', `listFiles: ${text(e)}`); }
   };
-  const branchName = (name: string) => withBranchPrefix(config, name);
-  const worktreePath = (name: string) => worktreePathForBranch(config, name);
+  const noIndexDiff = async (cwd: string, file: string): Promise<Result<string>> => {
+    try {
+      return ok((await exec('git', ['diff', '--no-index', '--binary', '--src-prefix=a/', '--dst-prefix=b/', '--', '/dev/null', file], { cwd })).stdout.trim());
+    } catch (e) {
+      const diff = e as { code?: number; stdout?: string };
+      return diff.code === 1 ? ok((diff.stdout ?? '').trim()) : err('GIT_ERROR', `untrackedDiff(${file}): ${text(e)}`);
+    }
+  };
+  const branchName = (name: string) => withBranchPrefix(config, name), worktreePath = (name: string) => worktreePathForBranch(config, name);
   const mergePath = (base: string) => baseWorktreePath(config, base);
   const current = async (): Promise<Result<string>> => {
     const r = await runRoot('currentBranch', ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -61,14 +67,33 @@ export function createGitAdapter(config: AgentloopConfig): GitAdapter {
     return added.ok ? ok(path) : added;
   };
   const ensureBaseWorktree = async (base: string): Promise<Result<string>> => {
+    const branch = await current(); if (!branch.ok) return branch;
+    if (branch.value === base) return ok(config.repoPath);
     const path = mergePath(base);
     if (await exists(path)) return ok(path);
     await mkdir(dirname(path), { recursive: true });
     const added = await runRoot('addBaseWorktree', ['worktree', 'add', path, base]);
     return added.ok ? ok(path) : added;
   };
-  const commitIn = async (cwd: string, message: string) => {
-    const add = await run(cwd, 'add', ['add', '.']); if (!add.ok) return add;
+  const taskFile = ((path: string) => (isAbsolute(path) ? relative(config.repoPath, path) : path).replace(/^\.\//, ''))(config.taskFilePath ?? 'tasks.json');
+  const taskArg = taskFile && !taskFile.startsWith('..') ? [`:(exclude)${taskFile}`] : [];
+  const guardRootBaseMerge = async (cwd: string, action: string): Promise<Result<void>> => {
+    if (cwd != config.repoPath) return ok(undefined);
+    const dirty = await listFiles(cwd, ['diff', '--name-only', 'HEAD']); if (!dirty.ok) return dirty;
+    const files = dirty.value.filter(file => file !== taskFile && !file.startsWith('.agentloop/'));
+    return files.length === 0 ? ok(undefined) : err('DIRTY_TREE', `${action}: repo root has tracked changes`, { files });
+  };
+  const diffIn = async (cwd: string, from: string, to?: string): Promise<Result<string>> => {
+    const tracked = await run(cwd, 'getDiff', ['diff', to ? `${from}..${to}` : from]); if (!tracked.ok) return tracked;
+    if (to) return tracked;
+    const untracked = await listFiles(cwd, ['ls-files', '--others', '--exclude-standard']); if (!untracked.ok) return untracked;
+    const extra: string[] = [];
+    for (const file of untracked.value) { const diff = await noIndexDiff(cwd, file); if (!diff.ok) return diff; extra.push(diff.value); }
+    return ok([tracked.value, ...extra].filter(Boolean).join('\n\n').trim());
+  };
+  const commitIn = async (cwd: string, message: string, tracked = false) => {
+    const add = await run(cwd, 'add', tracked ? (cwd == config.repoPath ? ['add', '-u', '--', '.', ...taskArg, ':(exclude).agentloop/**'] : ['add', '-u']) : ['add', '.']);
+    if (!add.ok) return add;
     const commit = await run(cwd, 'commit', ['commit', '-m', message]);
     return !commit.ok && /nothing to commit|no changes added to commit/i.test(commit.error.message)
       ? run(cwd, 'revParse', ['rev-parse', 'HEAD'])
@@ -85,12 +110,12 @@ export function createGitAdapter(config: AgentloopConfig): GitAdapter {
       return r.ok ? ok<BranchState>({ name: branch, createdFrom, worktreePath: path }) : r;
     },
     async checkoutBranch(name) { const r = await ensureWorktree(name); return r.ok ? ok(undefined) : r; },
-    async checkoutBase(base) { const r = await ensureBaseWorktree(base); return r.ok ? ok(undefined) : r; },
+    checkoutBase: ensureBaseWorktree,
     async commit(message, branch) { const cwd = await ensureWorktree(branch); return cwd.ok ? commitIn(cwd.value, message) : cwd; },
-    async commitBase(message, base) { const cwd = await ensureBaseWorktree(base); return cwd.ok ? commitIn(cwd.value, message) : cwd; },
-    async getDiff(from, to) { return runRoot('getDiff', ['diff', to ? `${from}..${to}` : from]); },
-    async merge(branch, into) { const cwd = await ensureBaseWorktree(into); if (!cwd.ok) return cwd; const mg = await run(cwd.value, 'merge', ['merge', branchName(branch)]); return mg.ok ? run(cwd.value, 'mergeHead', ['rev-parse', 'HEAD']) : mg; },
-    async prepareMerge(branch, into) { const cwd = await ensureBaseWorktree(into); if (!cwd.ok) return cwd; const mg = await run(cwd.value, 'prepareMerge', ['merge', '--no-ff', '--no-commit', branchName(branch)]); return mg.ok ? ok(undefined) : mg; },
+    async commitBase(message, base) { const cwd = await ensureBaseWorktree(base); return cwd.ok ? commitIn(cwd.value, message, true) : cwd; },
+    async getDiff(from, to, cwd) { return diffIn(cwd ?? config.repoPath, from, to); },
+    async merge(branch, into) { const cwd = await ensureBaseWorktree(into); if (!cwd.ok) return cwd; const safe = await guardRootBaseMerge(cwd.value, 'merge'); if (!safe.ok) return safe; const mg = await run(cwd.value, 'merge', ['merge', branchName(branch)]); return mg.ok ? run(cwd.value, 'mergeHead', ['rev-parse', 'HEAD']) : mg; },
+    async prepareMerge(branch, into) { const cwd = await ensureBaseWorktree(into); if (!cwd.ok) return cwd; const safe = await guardRootBaseMerge(cwd.value, 'prepareMerge'); if (!safe.ok) return safe; const mg = await run(cwd.value, 'prepareMerge', ['merge', '--no-ff', '--no-commit', branchName(branch)]); return mg.ok ? ok(undefined) : mg; },
     async abortMerge(into) { const cwd = await ensureBaseWorktree(into); if (!cwd.ok) return cwd; const r = await run(cwd.value, 'abortMerge', ['merge', '--abort']); return !r.ok && /MERGE_HEAD missing|There is no merge to abort/.test(r.error.message) ? ok(undefined) : r.ok ? ok(undefined) : r; },
     async abandonBranch(branch) {
       const path = worktreePath(branch), fullBranch = branchName(branch);

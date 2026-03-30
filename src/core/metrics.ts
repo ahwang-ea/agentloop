@@ -18,11 +18,12 @@ export const metricsPath = (config: Pick<AgentloopConfig, 'repoPath'>) => join(c
 export const recordSessionChanges = (state: ConvergenceState, files: string[]) => {
   state.changedFiles = unique([...state.changedFiles, ...files]);
 };
-
+export const recordErrorType = (state: ConvergenceState, label: string) => {
+  state.errorTypes = unique([...state.errorTypes, slug(label)]);
+};
 export const recordVerifyErrors = (state: ConvergenceState, errors: VerifyError[]) => {
   state.errorTypes = unique([...state.errorTypes, ...errors.map(error => slug(error.message) || error.source)]);
 };
-
 export const recordReviewFindings = (state: ConvergenceState, findings: ReviewFinding[]) => {
   state.reviewFindings += findings.length;
   state.errorTypes = unique([...state.errorTypes, ...findings.map(finding => slug(finding.topicKey ?? finding.description))]);
@@ -83,7 +84,6 @@ export async function logTaskMetrics(
   const state = await readTaskState(queue, task.id);
   return state.ok ? logMetrics(config, task, outcome, metricsFromTaskState(state.value)) : state;
 }
-
 export async function logInferredTaskMetrics(
   config: Pick<AgentloopConfig, 'repoPath'>, queue: TaskQueueAdapter, task: TaskDefinition,
 ): Promise<Result<void>> {

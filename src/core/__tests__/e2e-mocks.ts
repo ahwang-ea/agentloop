@@ -7,7 +7,7 @@ import { runOrchestrator, type Deps } from '../../orchestrator.js';
 import { err, ok, type Result } from '../../shared/result.js';
 import type { AgentloopConfig, TaskInput, TaskState } from '../../types/index.js';
 import { createFileTaskQueue } from '../task-queue.js';
-import { cleanupPrompt } from '../writer-prompt.js';
+import { buildCleanupPrompt } from '../writer-prompt.js';
 import { worktreePathForBranch } from '../worktree.js';
 const exec = promisify(execFile);
 type Mode = 'happy' | 'stuck' | 'debug';
@@ -95,16 +95,16 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
           return wrap('write greet', async () => { await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8'); return { text: 'wrote greet', changedFiles: ['src/greet.ts'], tokenEstimate: 1 }; });
         },
         fix: async (prompt, cwd) => {
-          const logged = await mark(repoPath, prompt === cleanupPrompt ? 'cleanup' : 'fix'); if (!logged.ok) return logged;
+          const cleanup = prompt === buildCleanupPrompt({ scope: task(mode).scope } as never), logged = await mark(repoPath, cleanup ? 'cleanup' : 'fix'); if (!logged.ok) return logged;
           return wrap('fix greet', async () => {
-            if (prompt === cleanupPrompt) await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8');
-            return { text: prompt === cleanupPrompt ? 'cleanup' : 'retry', changedFiles: ['src/greet.ts'], tokenEstimate: 1 };
+            if (cleanup) await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8');
+            return { text: cleanup ? 'cleanup' : 'retry', changedFiles: ['src/greet.ts'], tokenEstimate: 1 };
           });
         },
       },
       git: {
         createBranch: async (name, from) => { const path = await initWorktree(cfg, repoPath, name, mode); if (!path.ok) return path; paths.set(name, path.value); return ok({ name, createdFrom: from ?? 'main', worktreePath: path.value }); },
-        checkoutBranch: async () => ok(undefined), checkoutBase: async () => ok(undefined), commit: async () => ok('commit-1'), commitBase: async () => ok('base-1'),
+        checkoutBranch: async () => ok(undefined), checkoutBase: async () => ok(repoPath), commit: async () => ok('commit-1'), commitBase: async () => ok('base-1'),
         getDiff: diff, prepareMerge: async () => ok(undefined), abortMerge: async () => ok(undefined), abandonBranch: async () => ok(undefined), rebaseAll: async () => ok(undefined), revertFiles: async () => ok(undefined), currentBranch: async () => ok('main'),
         merge: async () => { const logged = await mark(repoPath, 'merge'); return logged.ok ? ok('merge-1') : logged; },
       },

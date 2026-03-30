@@ -13,6 +13,11 @@ const researchPrompt = (task: TaskDefinition) => [
   'Use web search when repo context is insufficient. Do not implement production behavior beyond interfaces and notes.',
 ];
 
+export const buildCleanupPrompt = (task: Pick<TaskDefinition, 'scope'>) => [
+  cleanupPrompt,
+  `Editable files: ${task.scope.editableFiles.join(', ') || '(none specified)'}`,
+  'Do not inspect or edit node_modules, dist, coverage, .git, or generated files. Stop immediately if no cleanup is needed.',
+].join('\n');
 export const buildWritePrompt = (task: TaskDefinition) => [
   ...(task.type === 'research' ? researchPrompt(task) : [`Implement this task: ${task.title}`, task.description]),
   'Acceptance criteria:',

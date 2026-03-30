@@ -4,11 +4,12 @@ set -u
 start_ts="$(date +%s)"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 tmp_dir=""
+worktree_dir=""
 log_file=""
 
 elapsed() { echo "$(( $(date +%s) - start_ts ))s"; }
 fail() { echo "FAIL ($(elapsed)): $1"; exit 1; }
-cleanup() { [ -n "$tmp_dir" ] && [ -d "$tmp_dir" ] && rm -rf "$tmp_dir"; }
+cleanup() { [ -n "$tmp_dir" ] && [ -d "$tmp_dir" ] && rm -rf "$tmp_dir"; [ -n "$worktree_dir" ] && [ -d "$worktree_dir" ] && rm -rf "$worktree_dir"; }
 trap cleanup EXIT
 
 [ -n "${ANTHROPIC_API_KEY:-}" ] || fail 'Missing ANTHROPIC_API_KEY'
@@ -19,23 +20,27 @@ cd "$root" || fail 'Cannot enter repo root'
 npm run build >/dev/null || fail 'agentloop build failed'
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/agentloop-e2e-real.XXXXXX")"
+worktree_dir="${tmp_dir}.worktrees"
 log_file="$tmp_dir/agentloop-start.log"
 cd "$tmp_dir" || fail 'Cannot enter temp repo'
 
+deps="$(ROOT_PATH="$root" node <<'NODE'
+const fs = require('node:fs');
+const pkg = JSON.parse(fs.readFileSync(`${process.env.ROOT_PATH}/package.json`, 'utf8'));
+const exact = name => `${name}@${String(pkg.devDependencies[name]).replace(/^[^0-9]*/, '')}`;
+console.log(['typescript', 'jest', 'ts-jest'].map(exact).join(' '));
+NODE
+)"
 npm init -y >/dev/null 2>&1 || fail 'npm init -y failed'
-npm install --silent typescript jest ts-jest >/dev/null 2>&1 || fail 'npm install failed'
+npm install --silent $deps >/dev/null 2>&1 || fail 'npm install failed'
 git init -b main >/dev/null 2>&1 || fail 'git init failed'
 git config user.email e2e@agentloop.local || fail 'git user.email failed'
 git config user.name agentloop-e2e || fail 'git user.name failed'
 node "$root/dist/cli.js" init >/dev/null || fail 'agentloop init failed'
-cat > agentloop.e2e.json <<'JSON'
-{
-  "repoPath": ".",
-  "taskFilePath": "tasks.json",
-  "worktreeRoot": ".agentloop/worktrees",
-  "architectureMdPath": null
-}
-JSON
+WORKTREE_DIR="$worktree_dir" node <<'NODE'
+const fs = require('node:fs');
+fs.writeFileSync('agentloop.e2e.json', `${JSON.stringify({ repoPath: '.', taskFilePath: 'tasks.json', worktreeRoot: process.env.WORKTREE_DIR, architectureMdPath: null }, null, 2)}\n`);
+NODE
 mkdir -p src test || fail 'mkdir failed'
 
 cat > tsconfig.json <<'JSON'
@@ -68,7 +73,7 @@ JS
 node <<'NODE'
 const fs = require('node:fs');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-pkg.scripts = { ...pkg.scripts, test: 'jest --runInBand', typecheck: 'tsc --noEmit', build: 'tsc' };
+pkg.scripts = { ...pkg.scripts, test: 'jest', typecheck: 'tsc --noEmit', build: 'tsc' };
 fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
 NODE
 
@@ -89,6 +94,9 @@ const added = await queue.add({
 });
 if (!added.ok) { console.error(added.error.message); process.exit(1); }
 NODE
+printf 'export {}\n' > src/agentloop-preflight.ts || fail 'bootstrap preflight file failed'
+npm run typecheck >/dev/null 2>&1 || fail 'bootstrap typecheck failed'
+rm -f src/agentloop-preflight.ts || fail 'bootstrap preflight cleanup failed'
 [ -s tasks.json ] || fail 'tasks.json was not seeded'
 
 git add . >/dev/null 2>&1 || fail 'git add failed'

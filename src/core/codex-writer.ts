@@ -38,7 +38,7 @@ export function createCodexWriterAdapter(model: string): CodexWriterAdapter {
     const dir = await mkdtemp(join(tmpdir(), 'agentloop-codex-'));
     const out = join(dir, 'last-message.txt');
     try {
-      await exec('codex', ['exec', '--full-auto', '--color', 'never', '-m', model, '-C', cwd, '-o', out, prompt], { cwd, timeout: 20 * 60_000 });
+      await exec('codex', ['exec', '--full-auto', '--color', 'never', '-m', model, '-C', cwd, '-o', out, prompt], { cwd, timeout: 20 * 60_000, maxBuffer: 10 * 1024 * 1024 });
       const files = await changedFiles(cwd); if (!files.ok) return files;
       return ok({ text: (await readOutput(out)).trim(), changedFiles: files.value, tokenEstimate: 0 });
     } catch (e) {

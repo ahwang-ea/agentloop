@@ -1,10 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ok, err, type Result } from '../shared/result.js';
-import type { AgentloopConfig, NotifierAdapter, RepoInventory } from '../types/index.js';
+import type { AgentloopConfig, GitAdapter, NotifierAdapter, RepoInventory } from '../types/index.js';
 import { diffInventories, formatIntentSummary } from './inventory-diff.js';
 import { scanRepo } from './scanner.js';
-import { baseWorktreePath } from './worktree.js';
 
 const baselinePath = (repoPath: string) => join(repoPath, '.agentloop', 'intent-baseline.json');
 
@@ -26,10 +25,11 @@ export async function ensureIntentBaseline(repoPath: string, inventory: RepoInve
 }
 
 export async function runIntentCheck(
-  config: AgentloopConfig, notifier: NotifierAdapter, feature: string, mergeCommit: string,
+  config: AgentloopConfig, git: GitAdapter, notifier: NotifierAdapter, feature: string, mergeCommit: string,
 ): Promise<Result<void>> {
   const baseline = await readBaseline(config.repoPath); if (!baseline.ok) return baseline;
-  const current = await scanRepo(baseWorktreePath(config, config.baseBranch)); if (!current.ok) return current;
+  const base = await git.checkoutBase(config.baseBranch); if (!base.ok) return base;
+  const current = await scanRepo(base.value); if (!current.ok) return current;
   const delta = diffInventories(baseline.value ?? current.value, current.value);
   const sent = await notifier.send({
     type: 'intent-check',

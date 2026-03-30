@@ -44,7 +44,7 @@ async function singleReviewPass(
   d: ReviewDeps, session: ClaudeSession | undefined, task: TaskDefinition,
   conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<ReviewPass>> {
-  const diff = await d.git.getDiff(d.config.baseBranch); if (!diff.ok) return err(diff.error.code, diff.error.message);
+  const diff = await d.git.getDiff(d.config.baseBranch, undefined, cwd); if (!diff.ok) return err(diff.error.code, diff.error.message);
   const reviews = await runSequentialReviews(d, task, diff.value); if (!reviews.ok) return err(reviews.error.code, reviews.error.message);
   const findings = reviews.value.flatMap(review => review.findings);
   if (findings.length === 0) return ok({ count: 0, hashes: [] });
