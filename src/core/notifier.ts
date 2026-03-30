@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { IncomingWebhook } from '@slack/webhook';
 import { dirname, join } from 'node:path';
 import { ok, err, type Result } from '../shared/result.js';
+import { clearStaleLock } from './stale-lock.js';
 import type { AgentloopConfig, Notification, NotifierAdapter } from '../types/index.js';
 
 type NotificationKey = { key: string; createdAt?: string };
@@ -14,6 +15,7 @@ export const notificationStatePath = (c: Pick<AgentloopConfig, 'repoPath'>) => j
 async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise<Result<T>> {
   const lock = `${path}.lock`;
   await mkdir(dirname(path), { recursive: true });
+  const stale = await clearStaleLock(lock); if (!stale.ok) return stale;
   for (let i = 0; i < 100; i++) {
     try { await mkdir(lock); break; } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') return err('TRANSPORT_ERROR', `Cannot lock ${path}`);
