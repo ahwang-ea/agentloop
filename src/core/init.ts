@@ -59,6 +59,7 @@ export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
     writeOnce(join(repoPath, 'ARCHITECTURE.md'), arch.value, summary),
     writeOnce(join(repoPath, 'verify.sh'), verify.value, summary, 0o755),
     copyOnce(asset('templates', 'CODEX_HOOKS_README.md'), join(repoPath, 'CODEX_HOOKS_README.md'), summary),
+    copyOnce(asset('templates', 'tsconfig.json'), join(repoPath, 'tsconfig.json'), summary),
     copyOnce(asset('templates', 'claude-settings.json'), join(repoPath, '.claude', 'settings.json'), summary),
     copyOnce(asset('templates', 'codex-hooks.json'), join(repoPath, '.codex', 'hooks.json'), summary),
     copyOnce(asset('templates', '.claude', 'commands', 'status.md'), join(repoPath, '.claude', 'commands', 'status.md'), summary),
