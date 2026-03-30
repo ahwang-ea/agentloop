@@ -51,17 +51,16 @@ async function copyOnce(from: string, to: string, summary: Summary, mode?: numbe
 export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
   const summary: Summary = { created: [], skipped: [] };
   const projectName = basename(repoPath);
-  const agents = await readTemplate(asset('templates', 'AGENTS.md'), projectName);
-  if (!agents.ok) return agents;
-  const arch = await readTemplate(asset('templates', 'ARCHITECTURE.md'), projectName);
-  if (!arch.ok) return arch;
-  const verify = await readTemplate(asset('templates', 'verify.sh'), projectName);
-  if (!verify.ok) return verify;
+  const agents = await readTemplate(asset('templates', 'AGENTS.md'), projectName); if (!agents.ok) return agents;
+  const arch = await readTemplate(asset('templates', 'ARCHITECTURE.md'), projectName); if (!arch.ok) return arch;
+  const verify = await readTemplate(asset('templates', 'verify.sh'), projectName); if (!verify.ok) return verify;
   const files: Array<Promise<Result<void>>> = [
     writeOnce(join(repoPath, 'AGENTS.md'), agents.value, summary),
     writeOnce(join(repoPath, 'ARCHITECTURE.md'), arch.value, summary),
     writeOnce(join(repoPath, 'verify.sh'), verify.value, summary, 0o755),
+    copyOnce(asset('templates', 'CODEX_HOOKS_README.md'), join(repoPath, 'CODEX_HOOKS_README.md'), summary),
     copyOnce(asset('templates', 'claude-settings.json'), join(repoPath, '.claude', 'settings.json'), summary),
+    copyOnce(asset('templates', 'codex-hooks.json'), join(repoPath, '.codex', 'hooks.json'), summary),
     copyOnce(asset('templates', '.claude', 'commands', 'status.md'), join(repoPath, '.claude', 'commands', 'status.md'), summary),
     copyOnce(asset('templates', '.claude', 'commands', 'queue.md'), join(repoPath, '.claude', 'commands', 'queue.md'), summary),
     copyOnce(asset('templates', '.claude', 'commands', 'add-task.md'), join(repoPath, '.claude', 'commands', 'add-task.md'), summary),
@@ -73,8 +72,7 @@ export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
     writeOnce(join(repoPath, '.agentloop', 'session-status.json'), JSON.stringify({ status: 'idle' }, null, 2), summary),
   ];
   for (const result of await Promise.all(files)) if (!result.ok) return result;
-  const inventory = await writeInventory(repoPath);
-  if (!inventory.ok) return inventory;
+  const inventory = await writeInventory(repoPath); if (!inventory.ok) return inventory;
   if (shouldRunSmartInit(inventory.value)) {
     const smart = await runSmartInit(repoPath);
     if (!smart.ok) return smart;

@@ -13,7 +13,7 @@ export interface TaskDefinition {
   feature?: string;
   scope: TaskScope;
   acceptanceCriteria: string[];
-  model: ModelPreference;
+  model?: ModelPreference;
   priority: TaskPriority;
   createdAt: string;
 }

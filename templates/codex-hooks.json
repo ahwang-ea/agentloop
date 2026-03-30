@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "PostToolUse": [],
+    "PreToolUse": [],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf 'Read AGENTS.md and ARCHITECTURE.md before editing.\n\n'; [ -f AGENTS.md ] && cat AGENTS.md; [ -f ARCHITECTURE.md ] && printf '\n\n' && cat ARCHITECTURE.md || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./verify.sh"
+          },
+          {
+            "type": "command",
+            "command": "python3 .agentloop/hooks/on-stop.py"
+          }
+        ]
+      }
+    ]
+  }
+}

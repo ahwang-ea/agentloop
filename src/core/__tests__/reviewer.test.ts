@@ -1,5 +1,9 @@
-import { resolveConflicts } from '../reviewer.js';
-import type { ReviewFinding } from '../../types/index.js';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ok } from '../../shared/result.js';
+import { resolveConflicts, runSequentialReviews } from '../reviewer.js';
+import type { ReviewFinding, ReviewRequest } from '../../types/index.js';
 
 const issue = (
   reviewer: 'opus-bigpicture' | 'codex-detail',
@@ -53,4 +57,28 @@ describe('resolveConflicts', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toEqual(findings);
   });
+});
+
+test('runs Codex detail review before Claude sweep', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agentloop-review-'));
+  const agents = join(root, 'AGENTS.md'), arch = join(root, 'ARCHITECTURE.md');
+  await writeFile(agents, '# agents\n', 'utf-8');
+  await writeFile(arch, '# architecture\n', 'utf-8');
+  const order: string[] = [];
+  const task = { id: 't', title: 'Task', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium' as const, createdAt: '' };
+  const codexReview = async (request: ReviewRequest) => {
+    order.push(request.role);
+    return ok({ reviewer: request.role, findings: [], duration: 1, rawOutput: '{}' });
+  };
+  const claudeReview = async (request: ReviewRequest) => {
+    order.push(request.role);
+    return ok({ reviewer: request.role, findings: [], duration: 1, rawOutput: '{}' });
+  };
+  const result = await runSequentialReviews({
+    config: { codexEnabled: true, agentsMdPath: agents, architectureMdPath: arch },
+    codex: { review: codexReview },
+    claude: { review: claudeReview } as never,
+  }, task, 'diff');
+  expect(result.ok).toBe(true);
+  expect(order).toEqual(['codex-detail', 'opus-bigpicture']);
 });

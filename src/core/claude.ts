@@ -3,23 +3,14 @@
 import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { err, ok, type Result } from '../shared/result.js';
-import type { AgentloopConfig, ClaudeAdapter, ClaudeSession, SessionOutput, TaskDefinition } from '../types/index.js';
+import type { AgentloopConfig, ClaudeAdapter, ClaudeSession, SessionOutput, WriterOutput } from '../types/index.js';
 import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
+import { cleanupPrompt, buildWritePrompt } from './writer-prompt.js';
 
 interface StoredSession { initialPrompt: string; resumeId?: string; cwd: string; taskId: string; }
 interface TurnResult extends SessionOutput { sessionId: string; }
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const appEnv = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'agentloop/0.1.0' };
-const writePrompt = (task: TaskDefinition) => [
-  `Implement this task: ${task.title}`,
-  task.description,
-  'Acceptance criteria:',
-  ...task.acceptanceCriteria.map(item => `- ${item}`),
-  `Editable files: ${task.scope.editableFiles.join(', ') || '(none specified)'}`,
-  `Read-only context: ${task.scope.readOnlyContext.join(', ') || '(none)'}`,
-  `Forbidden files: ${task.scope.forbiddenFiles.join(', ') || '(none)'}`,
-  'Keep edits minimal, follow AGENTS.md, and stop when the task is complete.',
-].join('\n');
 const tokenCount = (usage: unknown) => ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
   .reduce((sum, key) => sum + (typeof (usage as Record<string, unknown> | null)?.[key] === 'number' ? Number((usage as Record<string, unknown>)[key]) : 0), 0);
 const stopReason = (raw: string | null, sawHook: boolean): SessionOutput['stopReason'] => sawHook
@@ -61,33 +52,32 @@ async function runTurn(
 
 export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
   const sessions = new Map<string, StoredSession>();
-  const runSessionTurn = async (session: ClaudeSession, prompt: string): Promise<Result<SessionOutput>> => {
+  const runSessionTurn = async (session: ClaudeSession, prompt: string): Promise<Result<WriterOutput>> => {
     const stored = sessions.get(session.id); if (!stored) return err('SESSION_ERROR', `Unknown Claude session ${session.id}`);
     const turn = await runTurn(config, stored.cwd, prompt, stored.resumeId, true); if (!turn.ok) return turn;
     stored.resumeId = turn.value.sessionId;
-    return ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason });
+    return ok({ text: turn.value.text, changedFiles: turn.value.changedFiles, tokenEstimate: turn.value.tokensDelta });
   };
   return {
     async startSession(task, cwd, reuse) {
       const stored = reuse ? sessions.get(reuse.id) : undefined;
-      if (stored) {
-        Object.assign(stored, { initialPrompt: writePrompt(task), cwd, taskId: task.id });
-        return ok({ id: reuse!.id, taskId: task.id });
+      if (stored && reuse) {
+        Object.assign(stored, { initialPrompt: buildWritePrompt(task), cwd, taskId: task.id });
+        return ok({ id: reuse.id, taskId: task.id });
       }
       const id = randomUUID();
-      sessions.set(id, { initialPrompt: writePrompt(task), cwd, taskId: task.id });
+      sessions.set(id, { initialPrompt: buildWritePrompt(task), cwd, taskId: task.id });
       return ok({ id, taskId: task.id });
     },
     async waitForStop(session) {
       const stored = sessions.get(session.id); if (!stored) return err('SESSION_ERROR', `Unknown Claude session ${session.id}`);
       if (!stored.initialPrompt) return err('SESSION_ERROR', `Claude session ${session.id} has no pending prompt`);
-      const prompt = stored.initialPrompt;
-      const result = await runSessionTurn(session, prompt);
+      const result = await runSessionTurn(session, stored.initialPrompt);
       if (result.ok) stored.initialPrompt = '';
       return result;
     },
     fix: (session, errors) => runSessionTurn(session, `Address the following feedback, make the necessary edits, and stop when done:\n\n${errors}`),
-    cleanup: session => runSessionTurn(session, 'Do a final cleanup pass. Remove obvious dead code or debug leftovers, keep behavior unchanged, and stop when done.'),
+    cleanup: session => runSessionTurn(session, cleanupPrompt),
     async review(request) {
       const started = Date.now();
       const turn = await runTurn(config, config.repoPath, buildReviewPrompt(request), undefined, false);

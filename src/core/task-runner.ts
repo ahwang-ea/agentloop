@@ -1,4 +1,4 @@
-import type { ClaudeSession, ConvergenceState, FinalizationState, SessionOutput, TaskDefinition } from '../types/index.js';
+import type { ClaudeSession, ConvergenceState, FinalizationState, TaskDefinition } from '../types/index.js';
 import type { Deps } from '../orchestrator.js';
 import { ok, err, type Result } from '../shared/result.js';
 import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
@@ -7,9 +7,7 @@ import { withLease } from './lease.js';
 import { reviewPhase } from './review-loop.js';
 import { runVerify } from './verifier.js';
 import { verifyLoop } from './verify-loop.js';
-
-const chk = (r: Result<SessionOutput>): Result<SessionOutput> =>
-  r.ok && !r.value.text.trim() && r.value.changedFiles.length === 0 ? err('EMPTY_RESPONSE', 'Agent returned empty output and changed no files') : r;
+import { runWriterCleanup, startWrite } from './writer.js';
 
 export async function runTask(
   d: Deps, task: TaskDefinition, branch: string, mergeInto: string, worktreePath: string,
@@ -24,25 +22,24 @@ export async function runTask(
     changedFiles: [],
   };
   const t0 = Date.now();
-  const session = await d.claude.startSession(task, worktreePath, warmSession); if (!session.ok) return session;
-  usage.session = session.value;
-  const stopped = chk(await withLease(() => d.claude.waitForStop(session.value), () => d.queue.renewClaim(task.id, token)));
-  if (!stopped.ok) return err(stopped.error.code, stopped.error.message);
-  addTaskTokens(usage, stopped.value.tokensDelta);
-  recordSessionChanges(conv, stopped.value.changedFiles);
+  const started = await withLease(() => startWrite(d, task, worktreePath, warmSession), () => d.queue.renewClaim(task.id, token));
+  if (!started.ok) return err(started.error.code, started.error.message);
+  usage.session = started.value.session;
+  addTaskTokens(usage, started.value.output.tokenEstimate);
+  recordSessionChanges(conv, started.value.output.changedFiles);
   let p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   let s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  let r = await verifyLoop(d, session.value, task.id, stopped.value.tokensDelta, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  let r = await verifyLoop(d, started.value.session, task, started.value.output.tokenEstimate, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   s = await d.queue.updateStatus(task.id, 'reviewing', token); if (!s.ok) return s;
-  r = await reviewPhase(d, session.value, task, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  r = await reviewPhase(d, started.value.session, task, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   s = await d.queue.updateStatus(task.id, 'cleanup', token); if (!s.ok) return s;
-  const cleanup = chk(await withLease(() => d.claude.cleanup(session.value), () => d.queue.renewClaim(task.id, token)));
+  const cleanup = await withLease(() => runWriterCleanup(d, started.value.session, task, worktreePath), () => d.queue.renewClaim(task.id, token));
   if (!cleanup.ok) return err(cleanup.error.code, cleanup.error.message);
-  addTaskTokens(usage, cleanup.value.tokensDelta);
+  addTaskTokens(usage, cleanup.value.tokenEstimate);
   recordSessionChanges(conv, cleanup.value.changedFiles);
   p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  r = await verifyLoop(d, session.value, task.id, cleanup.value.tokensDelta, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  r = await verifyLoop(d, started.value.session, task, cleanup.value.tokenEstimate, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   const fv = await runVerify(d.config.verifyCommand, worktreePath, { ...process.env, AGENTLOOP_MERGE_CHECK: '1' }); if (!fv.ok) return fv;
   if (!fv.value.pass) {
     recordVerifyErrors(conv, fv.value.errors);

@@ -6,32 +6,31 @@ import type {
   ClaudeAdapter,
   ClaudeSession,
   CodexAdapter,
+  CodexWriterAdapter,
   ConvergenceState,
   GitAdapter,
   ReviewFinding,
-  SessionOutput,
   TaskDefinition,
   TaskQueueAdapter,
   TaskStatus,
 } from '../types/index.js';
+import { withLease } from './lease.js';
 import { logTaskMetrics, recordReviewFindings, recordSessionChanges } from './metrics.js';
-import { formatFixPrompt, resolveConflicts, runParallelReviews } from './reviewer.js';
+import { formatFixPrompt, resolveConflicts, runSequentialReviews } from './reviewer.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { verifyLoop, type VerifyDeps } from './verify-loop.js';
-import { withLease } from './lease.js';
+import { runWriterFix, type WriterDeps } from './writer.js';
 
-interface ReviewDeps extends VerifyDeps {
+interface ReviewDeps extends VerifyDeps, WriterDeps {
   claude: ClaudeAdapter;
   codex: CodexAdapter;
+  codexWriter: CodexWriterAdapter;
   git: GitAdapter;
   queue: TaskQueueAdapter;
   config: AgentloopConfig;
 }
 interface ReviewPass { count: number; hashes: string[]; }
 
-const chk = (r: Result<SessionOutput>): Result<SessionOutput> =>
-  r.ok && !r.value.text.trim() && r.value.changedFiles.length === 0
-    ? err('EMPTY_RESPONSE', 'Agent returned empty output and changed no files') : r;
 const setStatus = (d: ReviewDeps, id: string, s: TaskStatus, token: string) => d.queue.updateStatus(id, s, token);
 const hashFinding = (f: ReviewFinding) => [f.severity, f.reviewer, f.topicKey ?? '', f.action ?? '', f.file ?? '', f.line ?? '', f.description.trim().toLowerCase()].join(':');
 const improved = (prev: string[], next: string[]) => {
@@ -42,45 +41,34 @@ const improved = (prev: string[], next: string[]) => {
 };
 
 async function singleReviewPass(
-  d: ReviewDeps, session: ClaudeSession, task: TaskDefinition,
+  d: ReviewDeps, session: ClaudeSession | undefined, task: TaskDefinition,
   conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<ReviewPass>> {
-  const diff = await d.git.getDiff(d.config.baseBranch);
-  if (!diff.ok) return err(diff.error.code, diff.error.message);
-  const reviews = await runParallelReviews(d, task, diff.value);
-  if (!reviews.ok) return err(reviews.error.code, reviews.error.message);
-  const findings = reviews.value.flatMap(r => r.findings);
+  const diff = await d.git.getDiff(d.config.baseBranch); if (!diff.ok) return err(diff.error.code, diff.error.message);
+  const reviews = await runSequentialReviews(d, task, diff.value); if (!reviews.ok) return err(reviews.error.code, reviews.error.message);
+  const findings = reviews.value.flatMap(review => review.findings);
   if (findings.length === 0) return ok({ count: 0, hashes: [] });
   recordReviewFindings(conv, findings);
-  const progress = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
-  if (!progress.ok) return progress;
-  const resolved = resolveConflicts(findings);
-  if (!resolved.ok) return resolved as Result<never>;
-  const sf = await setStatus(d, task.id, 'fixing', token);
-  if (!sf.ok) return sf as Result<never>;
-  const fix = chk(await withLease(
-    () => d.claude.fix(session, formatFixPrompt(resolved.value)),
-    () => d.queue.renewClaim(task.id, token),
-  ));
+  const progress = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!progress.ok) return progress;
+  const resolved = resolveConflicts(findings); if (!resolved.ok) return resolved as Result<never>;
+  const sf = await setStatus(d, task.id, 'fixing', token); if (!sf.ok) return sf as Result<never>;
+  const fix = await withLease(() => runWriterFix(d, session, task, formatFixPrompt(resolved.value), cwd), () => d.queue.renewClaim(task.id, token));
   if (!fix.ok) return err(fix.error.code, fix.error.message);
-  addTaskTokens(usage, fix.value.tokensDelta);
+  addTaskTokens(usage, fix.value.tokenEstimate);
   recordSessionChanges(conv, fix.value.changedFiles);
-  const saved = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
-  if (!saved.ok) return saved;
-  const vl = await verifyLoop(d, session, task.id, fix.value.tokensDelta, conv, t0, cwd, token, usage);
-  if (!vl.ok) return vl as Result<never>;
+  const saved = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!saved.ok) return saved;
+  const vl = await verifyLoop(d, session, task, fix.value.tokenEstimate, conv, t0, cwd, token, usage); if (!vl.ok) return vl as Result<never>;
   return ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() });
 }
 
 export async function reviewPhase(
-  d: ReviewDeps, session: ClaudeSession, task: TaskDefinition,
+  d: ReviewDeps, session: ClaudeSession | undefined, task: TaskDefinition,
   conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<void>> {
   let prev: string[] | null = null, stalled = 0;
   const stallLimit = Math.max(1, d.config.convergence.stuckThreshold - 1);
   while (true) {
-    if ((Date.now() - t0) / 1000 > d.config.convergence.maxWallClock)
-      return err('BUDGET_EXCEEDED', 'Review wall clock exceeded');
+    if ((Date.now() - t0) / 1000 > d.config.convergence.maxWallClock) return err('BUDGET_EXCEEDED', 'Review wall clock exceeded');
     const r = await singleReviewPass(d, session, task, conv, t0, cwd, token, usage);
     if (!r.ok) {
       if (r.error.code === 'REVIEW_CONFLICT') {
@@ -100,7 +88,6 @@ export async function reviewPhase(
       return err('REVIEW_STUCK', reason, { findings: r.value.hashes });
     }
     prev = r.value.hashes;
-    const s = await setStatus(d, task.id, 'reviewing', token);
-    if (!s.ok) return s;
+    const s = await setStatus(d, task.id, 'reviewing', token); if (!s.ok) return s;
   }
 }

@@ -1,6 +1,6 @@
 import { ok, type Result } from '../shared/result.js';
-import type { ClaudeAdapter, CodexAdapter, FinalizationState, GitAdapter, NotifierAdapter, TaskDefinition, TaskQueueAdapter, AgentloopConfig } from '../types/index.js';
-import { formatFixPrompt, resolveConflicts, runParallelReviews } from './reviewer.js';
+import type { AgentloopConfig, ClaudeAdapter, CodexAdapter, FinalizationState, GitAdapter, NotifierAdapter, TaskDefinition, TaskQueueAdapter } from '../types/index.js';
+import { formatFixPrompt, resolveConflicts, runSequentialReviews } from './reviewer.js';
 import { remainingFeatureTasks } from './feature.js';
 import { refreshFeatureDocs } from './feature-docs.js';
 import { mergeFeatureAtomically } from './feature-merge.js';
@@ -38,7 +38,7 @@ export async function prepareFeatureFinalization(
   const base = await d.git.checkoutBase(d.config.baseBranch); if (!base.ok) return base;
   const before = await scanRepo(baseWorktreePath(d.config, d.config.baseBranch)); if (!before.ok) return before;
   const diff = await d.git.getDiff(d.config.baseBranch, fin.featureBranch ?? fin.mergeInto); if (!diff.ok) return diff;
-  const reviews = await runParallelReviews(d, gateTask(task), diff.value); if (!reviews.ok) return reviews;
+  const reviews = await runSequentialReviews(d, gateTask(task), diff.value); if (!reviews.ok) return reviews;
   const resolved = resolveConflicts(reviews.value.flatMap(review => review.findings));
   if (!resolved.ok) {
     const blocked = await d.queue.markBlocked(task.id, resolved.error.message, resolved.error.details ?? {}, token);
@@ -65,9 +65,7 @@ export async function prepareFeatureFinalization(
       fin.approvalRequested = true;
       const saved = await persist(); if (!saved.ok) return saved;
     }
-    const blocked = await d.queue.markBlocked(task.id, `Awaiting human approval for feature ${feature}`, {
-      feature, featureBranch: fin.featureBranch ?? fin.mergeInto, command: `agentloop approve ${task.id}`,
-    }, token);
+    const blocked = await d.queue.markBlocked(task.id, `Awaiting human approval for feature ${feature}`, { feature, featureBranch: fin.featureBranch ?? fin.mergeInto, command: `agentloop approve ${task.id}` }, token);
     return blocked.ok ? ok('done') : blocked;
   }
   const merged = await mergeFeatureAtomically(d.git, fin.featureBranch ?? fin.mergeInto, d.config.baseBranch, `merge: ${feature}`,

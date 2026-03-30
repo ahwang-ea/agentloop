@@ -13,6 +13,7 @@ export interface AgentloopConfig {
   claudeModel: string;
   codexModel: string;
   codexEnabled: boolean;
+  useCodexWriter?: boolean;
   convergence: ConvergenceConfig;
   slackWebhookUrl?: string;
   taskSource: 'file' | 'linear';
@@ -31,6 +32,7 @@ export interface HookConfig {
     PostToolUse: HookEntry[];
     PreToolUse: HookEntry[];
     Stop: HookEntry[];
+    SessionStart?: HookEntry[];
     UserPromptSubmit?: HookEntry[];
   };
 }

@@ -13,26 +13,34 @@ import type {
   TaskStatus,
 } from './domain.js';
 
+export interface WriterOutput {
+  text: string;
+  changedFiles: string[];
+  tokenEstimate: number;
+}
 export interface SessionOutput {
   text: string;
   tokensDelta: number;
   changedFiles: string[];
   stopReason: 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_hook';
 }
-
 export interface ClaudeSession { id: string; taskId: string; }
 
 export interface ClaudeAdapter {
   startSession(task: TaskDefinition, cwd: string, reuse?: ClaudeSession): Promise<Result<ClaudeSession>>;
-  waitForStop(session: ClaudeSession): Promise<Result<SessionOutput>>;
-  fix(session: ClaudeSession, errors: string): Promise<Result<SessionOutput>>;
-  cleanup(session: ClaudeSession): Promise<Result<SessionOutput>>;
+  waitForStop(session: ClaudeSession): Promise<Result<WriterOutput>>;
+  fix(session: ClaudeSession, errors: string): Promise<Result<WriterOutput>>;
+  cleanup(session: ClaudeSession): Promise<Result<WriterOutput>>;
   review(request: ReviewRequest): Promise<Result<ReviewResult>>;
   chat(message: string): Promise<Result<SessionOutput>>;
   evictTaskSessions(taskId: string): Promise<Result<void>>;
 }
 
 export interface CodexAdapter { review(request: ReviewRequest): Promise<Result<ReviewResult>>; }
+export interface CodexWriterAdapter {
+  write(prompt: string, cwd: string): Promise<Result<WriterOutput>>;
+  fix(prompt: string, cwd: string): Promise<Result<WriterOutput>>;
+}
 
 export interface GitAdapter {
   createBranch(name: string, from?: string): Promise<Result<BranchState>>;
@@ -46,15 +54,14 @@ export interface GitAdapter {
   abortMerge(into: string): Promise<Result<void>>;
   abandonBranch(branch: string): Promise<Result<void>>;
   rebaseAll(base: string, except: string): Promise<Result<void>>;
+  revertFiles(paths: string[], cwd: string): Promise<Result<void>>;
   currentBranch(): Promise<Result<string>>;
 }
 
 export interface NotifierAdapter { send(notification: Notification): Promise<Result<void>>; }
-
 export type ActionableTaskState =
   | ({ status: 'writing'; task: TaskDefinition } & Pick<TaskState, 'branch' | 'round' | 'convergence'>)
   | { status: 'finalizing'; task: TaskDefinition; finalization: FinalizationState };
-
 export interface ClaimedActionableTask { state: ActionableTaskState; claimToken: string; }
 
 export interface TaskQueueAdapter {

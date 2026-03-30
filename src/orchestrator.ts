@@ -4,6 +4,7 @@ import type {
   ClaimedActionableTask,
   ClaudeAdapter,
   CodexAdapter,
+  CodexWriterAdapter,
   FinalizationState,
   GitAdapter,
   NotifierAdapter,
@@ -22,6 +23,7 @@ import { taskBranchName, worktreePathForBranch } from './core/worktree.js';
 export interface Deps {
   claude: ClaudeAdapter;
   codex: CodexAdapter;
+  codexWriter: CodexWriterAdapter;
   git: GitAdapter;
   notifier: NotifierAdapter;
   queue: TaskQueueAdapter;
@@ -120,7 +122,7 @@ async function runWorker(d: Deps, shared: SharedState): Promise<Result<void>> {
 }
 
 export async function runOrchestrator(deps: Deps): Promise<Result<void>> {
-  if (!deps.config.codexEnabled) return err('CONFIG_ERROR', 'Parallel Opus + Codex review is required by ARCHITECTURE.md');
+  if (!deps.config.codexEnabled) return err('CONFIG_ERROR', 'Codex + Opus review is required by ARCHITECTURE.md');
   const shared = { sweepCounter: 0 }, count = Math.max(1, deps.config.maxParallelAgents);
   const results = await Promise.all(Array.from({ length: count }, () => runWorker(deps, shared)));
   const failure = results.find(result => !result.ok);
