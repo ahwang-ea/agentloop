@@ -27,7 +27,7 @@ const inventory: RepoInventory = {
 const task = (editableFiles: string[], feature?: string) => ({
   title: 'Task', description: '', feature,
   scope: { editableFiles, readOnlyContext: [], forbiddenFiles: [] },
-  acceptanceCriteria: [], model: 'auto' as const, priority: 'medium' as const,
+  acceptanceCriteria: [], priority: 'medium' as const,
 });
 
 test('derives package scope from monorepo paths', () => {

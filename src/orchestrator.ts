@@ -74,9 +74,10 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: Work
     return released.ok ? ok(false) : released;
   }
   if (state.task.type === 'debug') return blockDebugTask(d, state.task, claimToken);
+  const useCodexWriter = d.config.useCodexWriter ?? true;
   if (state.task.type !== 'research') {
     if (!d.config.codexEnabled) return escalate(d, state.task, 'Codex + Opus review requires OPENAI_API_KEY', claimToken);
-    const codex = await verifyCodexCli(); if (!codex.ok) return escalate(d, state.task, codex.error.message, claimToken);
+    if (useCodexWriter) { const codex = await verifyCodexCli(); if (!codex.ok) return escalate(d, state.task, codex.error.message, claimToken); }
   }
   const feature = state.task.feature ? await d.git.createBranch(featureBranchName(state.task.feature), d.config.baseBranch) : null;
   if (feature && !feature.ok) return escalate(d, state.task, feature.error.message, claimToken);
@@ -88,7 +89,7 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: Work
   const progress = await d.queue.updateProgress(state.task.id, { branch, round: state.round, convergence: state.convergence }, claimToken); if (!progress.ok) return progress;
   if (state.status === 'merging') return mergeCommittedBranch(d.git, d.queue, state.task, branch, base, claimToken).then(r => r.ok ? ok(true) : r);
   if (state.task.type === 'research') return runResearchTask(d, state.task, branch, worktreePath, claimToken).then(r => r.ok ? ok(false) : r);
-  const usage = newTaskUsage(), warm = state.task.type === 'integrate' ? undefined : pickWarmSession(worker.warm, state.task.feature), taskDeps = { ...d, config: { ...d.config, useCodexWriter: true } };
+  const usage = newTaskUsage(), warm = state.task.type === 'integrate' ? undefined : pickWarmSession(worker.warm, state.task.feature), taskDeps = { ...d, config: { ...d.config, useCodexWriter } };
   const result = await runTask(taskDeps, state.task, branch, base, worktreePath, state.convergence, claimToken, warm, usage, !state.branch);
   worker.warm = result.ok && state.task.type === 'implement' ? recordWarmSession(worker.warm, state.task.feature, usage.session, usage.tokens, d.config) : emptyWarmSession();
   if (result.ok) return ok(true);

@@ -5,7 +5,6 @@ export type TaskStatus =
   | 'cleanup' | 'merging' | 'finalizing' | 'done' | 'stuck' | 'blocked';
 export type TaskPriority = 'low' | 'medium' | 'high';
 export type TaskType = 'research' | 'implement' | 'integrate' | 'debug';
-export type ModelPreference = 'claude' | 'auto';
 
 export interface TaskDefinition {
   id: string;
@@ -15,7 +14,6 @@ export interface TaskDefinition {
   type: TaskType;
   scope: TaskScope;
   acceptanceCriteria: string[];
-  model?: ModelPreference;
   priority: TaskPriority;
   createdAt: string;
 }

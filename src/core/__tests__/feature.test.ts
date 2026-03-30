@@ -7,7 +7,7 @@ const task = (title: string, feature?: string, editableFiles = ['src/app.ts']) =
   feature,
   scope: { editableFiles, readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: [],
-  model: 'auto' as const,
+  type: 'implement' as const,
   priority: 'medium' as const,
   createdAt: '',
 });

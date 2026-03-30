@@ -9,7 +9,6 @@ import { pruneGcArchives } from './gc-retention.js';
 import { metricsPath } from './metrics.js';
 import { notificationStatePath, pruneNotificationKeys } from './notifier.js';
 import { taskBranchName, withBranchPrefix, worktreePathForBranch, worktreeRootPath } from './worktree.js';
-
 interface GcDeps { claude: ClaudeAdapter; queue: TaskQueueAdapter; config: AgentloopConfig; }
 const exec = promisify(execFile), day = 24 * 60 * 60 * 1000;
 const active = new Set(['writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging', 'finalizing']);

@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG: AgentloopConfig = {
   claudeModel: 'claude-opus-4-6',
   codexModel: 'gpt-4.1',
   codexEnabled: true,
-  useCodexWriter: false,
+  useCodexWriter: true,
   convergence: { maxWallClock: 1800, maxTokens: 500000, stuckThreshold: 3, thrashOverlapRatio: 0.5 },
   taskSource: 'file',
   taskFilePath: 'tasks.json',

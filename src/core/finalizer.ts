@@ -69,7 +69,7 @@ export async function finalize(
       const et = await d.queue.ensureTask(`readme:${task.id}:${fin.mergeCommit}`, {
         title: `Update README for ${task.title}`, description: 'Behavior changes detected.',
         scope: { editableFiles: ['README.md'], readOnlyContext: [], forbiddenFiles: [] },
-        acceptanceCriteria: ['README reflects current behavior'], model: 'auto', priority: 'medium', type: 'implement',
+        acceptanceCriteria: ['README reflects current behavior'], priority: 'medium', type: 'implement',
       });
       if (!et.ok) return et as Result<never>;
     }

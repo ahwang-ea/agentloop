@@ -29,7 +29,7 @@ test('queue rejects cross-package writes in monorepos', async () => {
   const added = await createFileTaskQueue(config(repoPath)).add({
     title: 'Cross package', description: '',
     scope: { editableFiles: ['packages/orders/**/*', 'packages/shared/**/*'], readOnlyContext: [], forbiddenFiles: [] },
-    acceptanceCriteria: [], model: 'auto', priority: 'medium',
+    acceptanceCriteria: [], priority: 'medium',
   });
   expect(added.ok).toBe(false);
 });
@@ -41,7 +41,7 @@ test('queue injects shared-package read-only scope for feature tasks', async () 
   const added = await createFileTaskQueue(config(repoPath)).add({
     title: 'Orders feature', description: '', feature: 'checkout',
     scope: { editableFiles: ['packages/orders/**/*'], readOnlyContext: [], forbiddenFiles: [] },
-    acceptanceCriteria: [], model: 'auto', priority: 'medium',
+    acceptanceCriteria: [], priority: 'medium',
   });
   expect(added.ok).toBe(true);
   if (!added.ok) return;

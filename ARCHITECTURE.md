@@ -13,7 +13,7 @@ implements a subset. See PHASE2_HANDOFF.md for tasks that bridge the gap.
 4. Works on any repo that has AGENTS.md + verify.sh. No framework lock-in.
 
 ## Constraints
-- Under 2000 lines total. Each file under 150 lines.
+- Under 4000 lines total. Each file under 150 lines.
 - No classes. Plain functions + types. Match the pattern we enforce on target repos.
 - All operations that can fail return Result<T>. Never throw.
 - Zero runtime dependencies beyond the SDKs (claude-agent-sdk, openai, @slack/webhook).
@@ -57,9 +57,8 @@ Type safety notes:
   define a WriterOutput type that both adapters return: text, changedFiles,
   tokenEstimate (0 if unknown from Codex CLI, exact from Claude). No `success`
   field — redundant with Result wrapper. Update all write/fix call sites.
-- TaskType ('research'|'implement'|'integrate'|'debug') replaces ModelPreference
-  as the routing signal. ModelPreference should be removed or demoted to an
-  override hint. TaskType determines which model writes, not a separate field.
+- TaskType ('research'|'implement'|'integrate'|'debug') is the routing signal.
+  TaskType determines which model writes, not a separate field.
 
 ## Model Roles
 

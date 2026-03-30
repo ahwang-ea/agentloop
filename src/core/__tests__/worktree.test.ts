@@ -14,5 +14,5 @@ test('builds deterministic worktree paths', () => {
 });
 
 test('derives readable task branch names', () => {
-  expect(taskBranchName({ id: 'abc12345', title: 'Feature Webhooks!', description: '', acceptanceCriteria: [], createdAt: '', model: 'auto', priority: 'medium', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] } })).toBe('feature-webhooks');
+  expect(taskBranchName({ id: 'abc12345', title: 'Feature Webhooks!', description: '', acceptanceCriteria: [], createdAt: '', type: 'implement', priority: 'medium', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] } })).toBe('feature-webhooks');
 });

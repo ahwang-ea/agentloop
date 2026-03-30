@@ -11,7 +11,6 @@ const task = (id: string, title: string, type: TaskDefinition['type'] = 'impleme
   description: '',
   scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: [],
-  model: 'auto',
   type,
   priority: 'medium',
   createdAt: '2026-03-18T00:00:00.000Z',

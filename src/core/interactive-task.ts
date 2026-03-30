@@ -31,7 +31,6 @@ export async function enqueueInteractiveTask(deps: Deps): Promise<Result<void>> 
       description,
       scope: { editableFiles: packagePath ? packageScope(packagePath) : ['**/*'], readOnlyContext: [], forbiddenFiles: [] },
       acceptanceCriteria: [],
-      model: 'auto',
       priority: 'medium',
       type: 'implement',
     });

@@ -11,7 +11,6 @@ const docTask = (feature: string, delta: InventoryDelta): TaskDefinition => ({
   type: 'implement',
   scope: { editableFiles: ['AGENTS.md', 'ARCHITECTURE.md'], readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: ['Docs reflect the new modules, dependencies, env vars, and constraints.'],
-  model: 'auto',
   priority: 'high',
   createdAt: new Date().toISOString(),
 });

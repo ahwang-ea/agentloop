@@ -31,7 +31,6 @@ const task = (title: string) => ({
   description: '',
   scope: { editableFiles: ['**/*'], readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: [],
-  model: 'auto' as const,
   priority: 'low' as const,
 });
 
