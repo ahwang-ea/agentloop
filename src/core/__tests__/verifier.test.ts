@@ -1,4 +1,4 @@
-import { truncateVerifyOutput } from '../verifier.js';
+import { runVerify, truncateVerifyOutput } from '../verifier.js';
 
 const lines = (count: number) => Array.from({ length: count }, (_, index) => `line-${index + 1}`).join('\n');
 
@@ -14,4 +14,12 @@ test('truncates long verify output to the first 50 and last 10 lines', () => {
   expect(output[50]).toBe('... (truncated) ...');
   expect(output[51]).toBe('line-92');
   expect(output[60]).toBe('line-101');
+});
+
+test('passes extra environment variables to the verify command', async () => {
+  const result = await runVerify('printf %s "$AGENTLOOP_MERGE_CHECK"; exit 1', process.cwd(), { ...process.env, AGENTLOOP_MERGE_CHECK: '1' });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.pass).toBe(false);
+  expect(result.value.output).toBe('1');
 });

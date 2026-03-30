@@ -43,7 +43,7 @@ export async function runTask(
   p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
   r = await verifyLoop(d, session.value, task.id, cleanup.value.tokensDelta, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
-  const fv = await runVerify(d.config.verifyCommand, worktreePath); if (!fv.ok) return fv;
+  const fv = await runVerify(d.config.verifyCommand, worktreePath, { ...process.env, AGENTLOOP_MERGE_CHECK: '1' }); if (!fv.ok) return fv;
   if (!fv.value.pass) {
     recordVerifyErrors(conv, fv.value.errors);
     p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;

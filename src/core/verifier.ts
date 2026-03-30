@@ -14,10 +14,10 @@ export function truncateVerifyOutput(output: string): string {
   return [...lines.slice(0, 50), '... (truncated) ...', ...lines.slice(-10)].join('\n');
 }
 
-export async function runVerify(command: string, cwd = process.cwd()): Promise<Result<VerifyResult>> {
+export async function runVerify(command: string, cwd = process.cwd(), env = process.env): Promise<Result<VerifyResult>> {
   const start = Date.now();
   try {
-    const { stdout, stderr } = await exec('bash', ['-c', command], { cwd, timeout: 120_000 });
+    const { stdout, stderr } = await exec('bash', ['-c', command], { cwd, env, timeout: 120_000 });
     return ok({ pass: true, output: stdout + stderr, errors: [], duration: (Date.now() - start) / 1000 });
   } catch (e: unknown) {
     const duration = (Date.now() - start) / 1000;
