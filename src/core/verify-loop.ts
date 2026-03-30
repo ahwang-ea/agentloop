@@ -16,7 +16,7 @@ import { classifyConvergence, trackRound, shouldWebSearch } from './convergence.
 import { withLease } from './lease.js';
 import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
-import { runVerify, truncateVerifyOutput } from './verifier.js';
+import { progressiveVerify, truncateVerifyOutput } from './verifier.js';
 import { runWriterFix, type WriterDeps } from './writer.js';
 
 export interface VerifyDeps extends WriterDeps {
@@ -27,22 +27,20 @@ export interface VerifyDeps extends WriterDeps {
   config: AgentloopConfig;
 }
 
-const setStatus = (d: VerifyDeps, id: string, s: TaskStatus, token: string) =>
-  d.queue.updateStatus(id, s, token);
+const setStatus = (d: VerifyDeps, id: string, s: TaskStatus, token: string) => d.queue.updateStatus(id, s, token);
 
 export async function verifyLoop(
   d: VerifyDeps, session: ClaudeSession | undefined, task: TaskDefinition,
-  initTokenEstimate: number, conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
+  initTokenEstimate: number, lastChangedFiles: string[], conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<void>> {
   const { convergence: cc } = d.config;
-  let lastTokenEstimate = initTokenEstimate;
+  let lastTokenEstimate = initTokenEstimate, files = lastChangedFiles;
   while (true) {
-    const v = await runVerify(d.config.verifyCommand, cwd);
+    const v = await progressiveVerify(d.config, files, cwd, false);
     if (!v.ok) return err('VERIFY_FAILED', v.error.message);
     recordVerifyErrors(conv, v.value.errors);
     trackRound(conv, v.value, lastTokenEstimate);
-    const sp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
-    if (!sp.ok) return sp;
+    const sp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!sp.ok) return sp;
     if (v.value.pass) return ok(undefined);
     if ((Date.now() - t0) / 1000 > cc.maxWallClock) return err('BUDGET_EXCEEDED', `Wall clock: ${conv.rounds.length} rounds`);
     const tokens = conv.rounds.reduce((sum, round) => sum + round.tokens, 0);
@@ -57,10 +55,10 @@ export async function verifyLoop(
     const fix = await withLease(() => runWriterFix(d, session, task, prompt, cwd), () => d.queue.renewClaim(task.id, token));
     if (!fix.ok) return err(fix.error.code, fix.error.message);
     lastTokenEstimate = fix.value.tokenEstimate;
+    files = fix.value.changedFiles;
     addTaskTokens(usage, fix.value.tokenEstimate);
     recordSessionChanges(conv, fix.value.changedFiles);
-    const fp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
-    if (!fp.ok) return fp;
+    const fp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!fp.ok) return fp;
     const sv = await setStatus(d, task.id, 'verifying', token); if (!sv.ok) return sv;
   }
 }

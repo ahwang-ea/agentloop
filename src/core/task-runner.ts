@@ -5,7 +5,7 @@ import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { withLease } from './lease.js';
 import { reviewPhase } from './review-loop.js';
-import { runVerify } from './verifier.js';
+import { progressiveVerify } from './verifier.js';
 import { verifyLoop } from './verify-loop.js';
 import { runWriterCleanup, startWrite } from './writer.js';
 
@@ -29,7 +29,7 @@ export async function runTask(
   recordSessionChanges(conv, started.value.output.changedFiles);
   let p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   let s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  let r = await verifyLoop(d, started.value.session, task, started.value.output.tokenEstimate, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  let r = await verifyLoop(d, started.value.session, task, started.value.output.tokenEstimate, started.value.output.changedFiles, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   s = await d.queue.updateStatus(task.id, 'reviewing', token); if (!s.ok) return s;
   r = await reviewPhase(d, started.value.session, task, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   s = await d.queue.updateStatus(task.id, 'cleanup', token); if (!s.ok) return s;
@@ -39,8 +39,8 @@ export async function runTask(
   recordSessionChanges(conv, cleanup.value.changedFiles);
   p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  r = await verifyLoop(d, started.value.session, task, cleanup.value.tokenEstimate, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
-  const fv = await runVerify(d.config.verifyCommand, worktreePath, { ...process.env, AGENTLOOP_MERGE_CHECK: '1' }); if (!fv.ok) return fv;
+  r = await verifyLoop(d, started.value.session, task, cleanup.value.tokenEstimate, cleanup.value.changedFiles, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  const fv = await progressiveVerify(d.config, conv.changedFiles, worktreePath, true); if (!fv.ok) return fv;
   if (!fv.value.pass) {
     recordVerifyErrors(conv, fv.value.errors);
     p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;

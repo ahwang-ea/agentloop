@@ -57,7 +57,7 @@ async function singleReviewPass(
   addTaskTokens(usage, fix.value.tokenEstimate);
   recordSessionChanges(conv, fix.value.changedFiles);
   const saved = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!saved.ok) return saved;
-  const vl = await verifyLoop(d, session, task, fix.value.tokenEstimate, conv, t0, cwd, token, usage); if (!vl.ok) return vl as Result<never>;
+  const vl = await verifyLoop(d, session, task, fix.value.tokenEstimate, fix.value.changedFiles, conv, t0, cwd, token, usage); if (!vl.ok) return vl as Result<never>;
   return ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() });
 }
 

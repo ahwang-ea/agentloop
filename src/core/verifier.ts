@@ -4,9 +4,10 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { ok, err, type Result } from '../shared/result.js';
-import type { VerifyResult } from '../types/index.js';
+import type { AgentloopConfig, VerifyResult } from '../types/index.js';
 
 const exec = promisify(execFile);
+const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
 
 export function truncateVerifyOutput(output: string): string {
   const lines = output.split('\n');
@@ -22,9 +23,7 @@ export async function runVerify(command: string, cwd = process.cwd(), env = proc
   } catch (e: unknown) {
     const duration = (Date.now() - start) / 1000;
     const error = e as { stdout?: string; stderr?: string; code?: number | string };
-    if (typeof error.code === 'string' && error.code === 'ENOENT') {
-      return err('VERIFY_FAILED', `Verify command not found: ${command}`);
-    }
+    if (typeof error.code === 'string' && error.code === 'ENOENT') return err('VERIFY_FAILED', `Verify command not found: ${command}`);
     const output = (error.stdout ?? '') + (error.stderr ?? '');
     let errors = parseVerifyOutput(output);
     if (errors.length === 0) {
@@ -33,6 +32,13 @@ export async function runVerify(command: string, cwd = process.cwd(), env = proc
     }
     return ok({ pass: false, output, errors, duration });
   }
+}
+
+export function progressiveVerify(
+  config: AgentloopConfig, changedFiles: string[], cwd: string, mergeMode: boolean,
+): Promise<Result<VerifyResult>> {
+  const args = ['--progressive', ...(mergeMode ? ['--merge'] : []), ...changedFiles.map(quote)].join(' ');
+  return runVerify(`${config.verifyCommand} ${args}`.trim(), cwd, mergeMode ? { ...process.env, AGENTLOOP_MERGE_CHECK: '1' } : process.env);
 }
 
 function parseVerifyOutput(output: string) {
