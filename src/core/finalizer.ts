@@ -8,6 +8,7 @@ import type {
 } from '../types/index.js';
 import { detectBehaviorChanges } from './behavior.js';
 import { prepareFeatureFinalization } from './feature-gate.js';
+import { gc } from './gc.js';
 import { runIntentCheck } from './intent-check.js';
 import { logInferredTaskMetrics, logTaskMetrics } from './metrics.js';
 
@@ -37,6 +38,9 @@ export async function finalize(
     if (!feature.ok) return feature;
     if (feature.value === 'done') {
       const logged = await logInferredTaskMetrics(d.config, d.queue, task); if (!logged.ok) console.error(logged.error.message);
+      const tasks = await d.queue.list();
+      if (!tasks.ok) console.error(tasks.error.message);
+      if (tasks.ok && tasks.value.find(item => item.task.id === task.id)?.status === 'done') await gc(d, task, fin);
       return ok(undefined);
     }
   }
@@ -94,5 +98,6 @@ export async function finalize(
   const done = await d.queue.markDone(task.id, token);
   if (!done.ok) return done;
   const logged = await logTaskMetrics(d.config, d.queue, task, 'merged'); if (!logged.ok) console.error(logged.error.message);
+  await gc(d, task, fin);
   return ok(undefined);
 }

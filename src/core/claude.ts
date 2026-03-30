@@ -6,7 +6,7 @@ import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, ClaudeSession, SessionOutput, TaskDefinition } from '../types/index.js';
 import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
 
-interface StoredSession { initialPrompt: string; resumeId?: string; cwd: string; }
+interface StoredSession { initialPrompt: string; resumeId?: string; cwd: string; taskId: string; }
 interface TurnResult extends SessionOutput { sessionId: string; }
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const appEnv = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'agentloop/0.1.0' };
@@ -70,7 +70,7 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
   return {
     async startSession(task, cwd) {
       const id = randomUUID();
-      sessions.set(id, { initialPrompt: writePrompt(task), cwd });
+      sessions.set(id, { initialPrompt: writePrompt(task), cwd, taskId: task.id });
       return ok({ id, taskId: task.id });
     },
     async waitForStop(session) {
@@ -91,6 +91,10 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
     async chat(message) {
       const turn = await runTurn(config, config.repoPath, message, undefined, false);
       return turn.ok ? ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason }) : turn;
+    },
+    async evictTaskSessions(taskId) {
+      for (const [sessionId, stored] of sessions.entries()) if (stored.taskId === taskId) sessions.delete(sessionId);
+      return ok(undefined);
     },
   };
 }

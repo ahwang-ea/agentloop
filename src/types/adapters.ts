@@ -22,6 +22,7 @@ export interface ClaudeAdapter {
   cleanup(session: ClaudeSession): Promise<Result<SessionOutput>>;
   review(request: ReviewRequest): Promise<Result<ReviewResult>>;
   chat(message: string): Promise<Result<SessionOutput>>;
+  evictTaskSessions(taskId: string): Promise<Result<void>>;
 }
 
 export interface CodexAdapter { review(request: ReviewRequest): Promise<Result<ReviewResult>>; }
