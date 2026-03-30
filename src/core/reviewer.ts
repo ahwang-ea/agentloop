@@ -1,11 +1,15 @@
-// core/reviewer.ts — Parallel Opus + Codex reviews, conflict resolution.
+// core/reviewer.ts — Sequential Codex + Opus reviews, conflict resolution.
 
+import { readFile } from 'node:fs/promises';
 import { ok, err, type Result } from '../shared/result.js';
 import type {
-  TaskDefinition, ReviewResult, ReviewFinding, ReviewRequest,
-  ClaudeAdapter, CodexAdapter,
+  ClaudeAdapter,
+  CodexAdapter,
+  ReviewFinding,
+  ReviewRequest,
+  ReviewResult,
+  TaskDefinition,
 } from '../types/index.js';
-import { readFile } from 'node:fs/promises';
 
 interface ReviewDeps {
   claude: ClaudeAdapter;
@@ -22,35 +26,26 @@ async function readOptional(path?: string): Promise<Result<string>> {
   }
 }
 
-export async function runParallelReviews(
+export async function runSequentialReviews(
   deps: ReviewDeps, task: TaskDefinition, diff: string,
 ): Promise<Result<ReviewResult[]>> {
-  if (!deps.config.codexEnabled) {
-    return err('CONFIG_ERROR', 'Parallel Opus + Codex review is required by ARCHITECTURE.md');
-  }
-  const arch = await readOptional(deps.config.architectureMdPath);
-  if (!arch.ok) return arch;
+  if (!deps.config.codexEnabled) return err('CONFIG_ERROR', 'Codex + Opus review is required by ARCHITECTURE.md');
+  const arch = await readOptional(deps.config.architectureMdPath); if (!arch.ok) return arch;
   let agentsMd: string;
   try { agentsMd = await readFile(deps.config.agentsMdPath, 'utf-8'); }
   catch { return err('TRANSPORT_ERROR', `Cannot read ${deps.config.agentsMdPath} — required for review`); }
   const base: Omit<ReviewRequest, 'role'> = { diff, taskDefinition: task, architectureMd: arch.value || undefined, agentsMd };
-  const results = await Promise.all([
-    deps.claude.review({ ...base, role: 'opus-bigpicture' }),
-    deps.codex.review({ ...base, role: 'codex-detail' }),
-  ]);
-  const reviews: ReviewResult[] = [];
-  for (const r of results) {
-    if (!r.ok) return err(r.error.code, `Review failed: ${r.error.message}`);
-    if (!r.value.rawOutput.trim()) return err('EMPTY_RESPONSE', `Review adapter returned blank output for ${r.value.reviewer}`);
-    reviews.push(r.value);
-  }
-  return ok(reviews);
+  const detail = await deps.codex.review({ ...base, role: 'codex-detail' });
+  if (!detail.ok) return err(detail.error.code, `Review failed: ${detail.error.message}`);
+  if (!detail.value.rawOutput.trim()) return err('EMPTY_RESPONSE', `Review adapter returned blank output for ${detail.value.reviewer}`);
+  const sweep = await deps.claude.review({ ...base, role: 'opus-bigpicture' });
+  if (!sweep.ok) return err(sweep.error.code, `Review failed: ${sweep.error.message}`);
+  if (!sweep.value.rawOutput.trim()) return err('EMPTY_RESPONSE', `Review adapter returned blank output for ${sweep.value.reviewer}`);
+  return ok([detail.value, sweep.value]);
 }
 
 export function formatFixPrompt(findings: ReviewFinding[]): string {
-  return findings
-    .map(f => `[${f.reviewer}] ${f.severity}: ${f.description}${f.file ? ` (${f.file}:${f.line ?? ''})` : ''}`)
-    .join('\n');
+  return findings.map(f => `[${f.reviewer}] ${f.severity}: ${f.description}${f.file ? ` (${f.file}:${f.line ?? ''})` : ''}`).join('\n');
 }
 
 const PROXIMITY_LINES = 5;
@@ -72,7 +67,7 @@ function isConflict(a: ReviewFinding, b: ReviewFinding): boolean {
 
 export function resolveConflicts(findings: ReviewFinding[]): Result<ReviewFinding[]> {
   const located: ReviewFinding[] = [], unlocated: ReviewFinding[] = [];
-  for (const f of findings) { (f.file && f.line != null ? located : unlocated).push(f); }
+  for (const f of findings) (f.file && f.line != null ? located : unlocated).push(f);
   for (let i = 0; i < unlocated.length; i++) {
     for (let j = i + 1; j < unlocated.length; j++) {
       if (isConflict(unlocated[i], unlocated[j])) return err('REVIEW_CONFLICT', `Conflicting unlocated: [${unlocated[i].reviewer}] ${unlocated[i].description} vs [${unlocated[j].reviewer}] ${unlocated[j].description}`, { findings: [unlocated[i], unlocated[j]] });
@@ -81,7 +76,7 @@ export function resolveConflicts(findings: ReviewFinding[]): Result<ReviewFindin
   const groups: ReviewFinding[][] = [];
   for (const f of located) {
     const merged: ReviewFinding[][] = [], separate: ReviewFinding[][] = [];
-    for (const g of groups) { (g.some(gf => areNearby(gf, f)) ? merged : separate).push(g); }
+    for (const g of groups) (g.some(gf => areNearby(gf, f)) ? merged : separate).push(g);
     separate.push([...merged.flat(), f]);
     groups.length = 0; groups.push(...separate);
   }

@@ -2,89 +2,53 @@
 // cli.ts — Entry point for agentloop.
 
 import { readFile } from 'node:fs/promises';
-import { createInterface } from 'node:readline/promises';
 import { ok, err, type Result } from './shared/result.js';
+import { approveFeatureGate } from './core/approval.js';
+import { loadConfig } from './core/cli-config.js';
 import { scaffoldRepo } from './core/init.js';
+import { formatMetricsSummary, readMetricsSummary } from './core/metrics-report.js';
+import { runRescan } from './core/rescan.js';
+import { formatStatusSummary, readStatusSummary } from './core/status.js';
 import { runOrchestrator, type Deps } from './orchestrator.js';
 import { createDeps } from './core/deps.js';
-import type { AgentloopConfig } from './types/index.js';
-
-const DEFAULT_CONFIG: AgentloopConfig = {
-  repoPath: '.',
-  baseBranch: 'main',
-  verifyCommand: './verify.sh',
-  agentsMdPath: 'AGENTS.md',
-  architectureMdPath: 'ARCHITECTURE.md',
-  claudeModel: 'claude-opus-4-6',
-  codexModel: 'gpt-4.1',
-  codexEnabled: true,
-  convergence: { maxWallClock: 1800, maxTokens: 500000, stuckThreshold: 3, thrashOverlapRatio: 0.5 },
-  taskSource: 'file',
-  taskFilePath: 'tasks.json',
-  maxParallelAgents: 1,
-  parallelVerify: true,
-  sweepInterval: 10,
-};
-const USAGE = ['Usage: agentloop <init|start> [options]', '  init', '  start [--interactive] [--dry-run] [--config path]'].join('\n');
+import { enqueueInteractiveTask } from './core/interactive-task.js';
+const USAGE = ['Usage: agentloop <init|start|status|metrics|rescan|approve> [options]', '  init', '  start [--interactive] [--dry-run] [--config path]', '  status [--config path]', '  metrics [--config path]', '  rescan [--config path]', '  approve <task-id> [--config path]'].join('\n');
 
 type Command =
   | { name: 'init' }
-  | { name: 'start'; interactive: boolean; dryRun: boolean; configPath?: string };
+  | { name: 'start'; interactive: boolean; dryRun: boolean; configPath?: string }
+  | { name: 'status'; configPath?: string }
+  | { name: 'metrics'; configPath?: string }
+  | { name: 'rescan'; configPath?: string }
+  | { name: 'approve'; taskId: string; configPath?: string };
+
+const configPathOf = (args: string[]) => {
+  const index = args.indexOf('--config'), value = index >= 0 ? args[index + 1] : undefined;
+  return index >= 0 && !value ? err('CONFIG_ERROR', '--config requires a path') : ok(value);
+};
 
 function parseCommand(argv: string[]): Result<Command> {
   const [command, ...args] = argv;
   if (command === 'init' && args.length === 0) return ok({ name: 'init' });
   if (command === 'start') {
-    const configIndex = args.indexOf('--config');
-    const configPath = configIndex >= 0 ? args[configIndex + 1] : undefined;
-    if (configIndex >= 0 && !configPath) return err('CONFIG_ERROR', '--config requires a path');
-    return ok({ name: 'start', interactive: args.includes('--interactive'), dryRun: args.includes('--dry-run'), configPath });
+    const configPath = configPathOf(args); if (!configPath.ok) return configPath;
+    return ok({ name: 'start', interactive: args.includes('--interactive'), dryRun: args.includes('--dry-run'), configPath: configPath.value });
+  }
+  if (command === 'status') {
+    const configPath = configPathOf(args); return configPath.ok ? ok({ name: 'status', configPath: configPath.value }) : configPath;
+  }
+  if (command === 'metrics') {
+    const configPath = configPathOf(args); return configPath.ok ? ok({ name: 'metrics', configPath: configPath.value }) : configPath;
+  }
+  if (command === 'rescan') {
+    const configPath = configPathOf(args); return configPath.ok ? ok({ name: 'rescan', configPath: configPath.value }) : configPath;
+  }
+  if (command === 'approve') {
+    const taskId = args.find(arg => !arg.startsWith('--'));
+    const configPath = configPathOf(args); if (!configPath.ok) return configPath;
+    return taskId ? ok({ name: 'approve', taskId, configPath: configPath.value }) : err('CONFIG_ERROR', 'approve requires a task id');
   }
   return err('CONFIG_ERROR', USAGE);
-}
-
-function summarizeTask(input: string): string {
-  const oneLine = input.replace(/\s+/g, ' ').trim();
-  return oneLine.length <= 72 ? oneLine : `${oneLine.slice(0, 69).trimEnd()}...`;
-}
-
-async function enqueueInteractiveTask(deps: Deps): Promise<Result<void>> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return err('CONFIG_ERROR', 'Interactive mode requires a TTY');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const description = (await rl.question('What should agentloop build? ')).trim();
-    if (!description) return err('CONFIG_ERROR', 'No task provided');
-    const added = await deps.queue.add({
-      title: summarizeTask(description),
-      description,
-      scope: { editableFiles: ['**/*'], readOnlyContext: [], forbiddenFiles: [] },
-      acceptanceCriteria: [],
-      model: 'auto',
-      priority: 'medium',
-    });
-    if (!added.ok) return added;
-    console.log(`Queued: ${added.value.title}`);
-    return ok(undefined);
-  } catch (e) {
-    return err('TRANSPORT_ERROR', `Interactive input failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-  } finally {
-    rl.close();
-  }
-}
-
-async function loadConfig(path?: string): Promise<Result<AgentloopConfig>> {
-  if (!path) return ok(DEFAULT_CONFIG);
-  try {
-    const raw = JSON.parse(await readFile(path, 'utf-8')) as Partial<AgentloopConfig> & { architectureMdPath?: string | null };
-    return ok({
-      ...DEFAULT_CONFIG,
-      ...raw,
-      architectureMdPath: raw.architectureMdPath === null ? undefined : raw.architectureMdPath ?? DEFAULT_CONFIG.architectureMdPath,
-      convergence: { ...DEFAULT_CONFIG.convergence, ...raw.convergence },
-    });
-  } catch (e) {
-    return err('CONFIG_ERROR', `Cannot load config ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
-  }
 }
 
 async function handleInit(): Promise<Result<void>> {
@@ -111,12 +75,50 @@ async function handleStart(interactive: boolean, dryRun: boolean, configPath?: s
   return runOrchestrator(deps.value);
 }
 
+async function handleStatus(configPath?: string): Promise<Result<void>> {
+  const config = await loadConfig(configPath);
+  if (!config.ok) return config;
+  const summary = await readStatusSummary(config.value);
+  if (!summary.ok) return summary;
+  console.log(formatStatusSummary(summary.value));
+  return ok(undefined);
+}
+
+async function handleMetrics(configPath?: string): Promise<Result<void>> {
+  const config = await loadConfig(configPath);
+  if (!config.ok) return config;
+  const summary = await readMetricsSummary(config.value);
+  if (!summary.ok) return summary;
+  console.log(formatMetricsSummary(summary.value));
+  return ok(undefined);
+}
+
+async function handleRescan(configPath?: string): Promise<Result<void>> {
+  const config = await loadConfig(configPath);
+  if (!config.ok) return config;
+  const rescanned = await runRescan(config.value.repoPath);
+  if (!rescanned.ok) return rescanned;
+  console.log(rescanned.value);
+  return ok(undefined);
+}
+
+async function handleApprove(taskId: string, configPath?: string): Promise<Result<void>> {
+  const config = await loadConfig(configPath);
+  if (!config.ok) return config;
+  const approved = await approveFeatureGate(config.value, taskId);
+  if (!approved.ok) return approved;
+  return ok(undefined);
+}
+
 async function runCli(argv: string[]): Promise<Result<void>> {
   const command = parseCommand(argv);
   if (!command.ok) return command;
-  return command.value.name === 'init'
-    ? handleInit()
-    : handleStart(command.value.interactive, command.value.dryRun, command.value.configPath);
+  if (command.value.name === 'init') return handleInit();
+  if (command.value.name === 'status') return handleStatus(command.value.configPath);
+  if (command.value.name === 'metrics') return handleMetrics(command.value.configPath);
+  if (command.value.name === 'rescan') return handleRescan(command.value.configPath);
+  if (command.value.name === 'approve') return handleApprove(command.value.taskId, command.value.configPath);
+  return handleStart(command.value.interactive, command.value.dryRun, command.value.configPath);
 }
 
 const result = await runCli(process.argv.slice(2));

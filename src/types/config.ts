@@ -4,13 +4,17 @@ import type { ConvergenceConfig } from './domain.js';
 
 export interface AgentloopConfig {
   repoPath: string;
-  baseBranch: string;              // Configurable — not hard-coded to 'main'
+  baseBranch: string;
+  branchPrefix: string;
+  worktreeRoot: string;
   verifyCommand: string;
+  integrationTestCommand?: string;
   agentsMdPath: string;
   architectureMdPath?: string;
   claudeModel: string;
   codexModel: string;
   codexEnabled: boolean;
+  useCodexWriter?: boolean;
   convergence: ConvergenceConfig;
   slackWebhookUrl?: string;
   taskSource: 'file' | 'linear';
@@ -18,6 +22,8 @@ export interface AgentloopConfig {
   linearApiKey?: string;
   linearTeamId?: string;
   maxParallelAgents: number;
+  maxTasksPerSession: number;
+  maxTokensPerSession: number;
   parallelVerify: boolean;
   sweepInterval: number;
 }
@@ -27,6 +33,7 @@ export interface HookConfig {
     PostToolUse: HookEntry[];
     PreToolUse: HookEntry[];
     Stop: HookEntry[];
+    SessionStart?: HookEntry[];
     UserPromptSubmit?: HookEntry[];
   };
 }
