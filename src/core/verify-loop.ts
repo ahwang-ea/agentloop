@@ -14,7 +14,7 @@ import { classifyConvergence, trackRound, shouldWebSearch } from './convergence.
 import { withLease } from './lease.js';
 import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
-import { runVerify } from './verifier.js';
+import { runVerify, truncateVerifyOutput } from './verifier.js';
 
 export interface VerifyDeps {
   claude: ClaudeAdapter;
@@ -57,7 +57,7 @@ export async function verifyLoop(
     if (!sf.ok) return sf;
     const prompt = shouldWebSearch(conv) && !conv.webSearchTriggered
       ? (conv.webSearchTriggered = true, `Search for these errors, then fix:\n${v.value.errors.map(e => e.message).join('\n')}`)
-      : v.value.output;
+      : truncateVerifyOutput(v.value.output);
     const fix = chk(await withLease(
       () => d.claude.fix(session, prompt),
       () => d.queue.renewClaim(taskId, token),
