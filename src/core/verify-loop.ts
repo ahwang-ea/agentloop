@@ -24,12 +24,12 @@ const setStatus = (d: VerifyDeps, id: string, s: TaskStatus, token: string) =>
 
 export async function verifyLoop(
   d: VerifyDeps, session: ClaudeSession, taskId: string,
-  initTokensDelta: number, conv: ConvergenceState, t0: number, token: string,
+  initTokensDelta: number, conv: ConvergenceState, t0: number, cwd: string, token: string,
 ): Promise<Result<void>> {
   const { convergence: cc } = d.config;
   let lastTokensDelta = initTokensDelta;
   while (true) {
-    const v = await runVerify(d.config.verifyCommand);
+    const v = await runVerify(d.config.verifyCommand, cwd);
     if (!v.ok) return err('VERIFY_FAILED', v.error.message);
     trackRound(conv, v.value, lastTokensDelta);
     const sp = await d.queue.updateProgress(taskId, { round: conv.rounds.length, convergence: conv }, token);

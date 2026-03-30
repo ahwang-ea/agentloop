@@ -10,6 +10,7 @@ export interface TaskDefinition {
   id: string;
   title: string;
   description: string;
+  feature?: string;
   scope: TaskScope;
   acceptanceCriteria: string[];
   model: ModelPreference;
@@ -22,6 +23,12 @@ export interface TaskScope { editableFiles: string[]; readOnlyContext: string[];
 export interface FinalizationState {
   mergeCommit: string;
   branch: string;
+  mergeInto: string;
+  featureBranch?: string;
+  approvalRequested?: boolean;
+  approved?: boolean;
+  featureMerged?: boolean;
+  intentChecked?: boolean;
   behaviorNotified: boolean;
   readmeTaskEnsured: boolean;
   completionNotified: boolean;
@@ -35,6 +42,7 @@ export interface TaskState {
   task: TaskDefinition;
   status: TaskStatus;
   branch?: string;
+  stuckReason?: string;
   round: number;
   convergence?: ConvergenceState;
   finalization?: FinalizationState;
@@ -67,6 +75,26 @@ export interface ReviewResult { reviewer: ReviewerRole; findings: ReviewFinding[
 export interface BehaviorChange { type: 'endpoint' | 'response-shape' | 'error-behavior' | 'config' | 'schema' | 'auth' | 'timing'; description: string; files: string[]; }
 export interface BehaviorCheckResult { hasChanges: boolean; changes: BehaviorChange[]; readmeUpdateNeeded: boolean; }
 
-export interface BranchState { name: string; createdFrom: string; }
-export type NotificationType = 'behavior-change' | 'escalation' | 'sweep-result' | 'promotion-ready';
+export interface BranchState { name: string; createdFrom: string; worktreePath: string; }
+export type NotificationType = 'behavior-change' | 'escalation' | 'sweep-result' | 'promotion-ready' | 'intent-check';
 export interface Notification { type: NotificationType; taskId?: string; summary: string; details: string; timestamp: string; idempotencyKey?: string; }
+
+export interface InventoryFile { path: string; lines: number; }
+export interface InventoryPackage { name: string; path: string; }
+export interface InventoryDoc { path: string; modifiedAt: string; }
+export interface InventoryDependencyFile { path: string; kind: 'package.json' | 'pyproject.toml'; dependencies: string[]; }
+export interface RepoInventory {
+  scannedAt: string;
+  files: InventoryFile[];
+  monorepo: boolean;
+  packages: InventoryPackage[];
+  crossPackageImports: string[];
+  patterns: { resultCount: number; tryCatchCount: number; serviceFileCount: number; controllerFileCount: number; };
+  tests: { frameworks: string[]; count: number; };
+  docs: InventoryDoc[];
+  dependencies: InventoryDependencyFile[];
+  env: { example: string[]; referenced: string[]; missingInExample: string[]; unusedInExample: string[]; };
+  oversizedFiles: string[];
+  ci: string[];
+  importFrequency: Array<{ path: string; importedBy: number }>;
+}

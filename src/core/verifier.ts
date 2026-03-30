@@ -8,10 +8,10 @@ import { createHash } from 'node:crypto';
 
 const exec = promisify(execFile);
 
-export async function runVerify(command: string): Promise<Result<VerifyResult>> {
+export async function runVerify(command: string, cwd = process.cwd()): Promise<Result<VerifyResult>> {
   const start = Date.now();
   try {
-    const { stdout, stderr } = await exec('bash', ['-c', command], { timeout: 120_000 });
+    const { stdout, stderr } = await exec('bash', ['-c', command], { cwd, timeout: 120_000 });
     return ok({ pass: true, output: stdout + stderr, errors: [], duration: (Date.now() - start) / 1000 });
   } catch (e: unknown) {
     const duration = (Date.now() - start) / 1000;

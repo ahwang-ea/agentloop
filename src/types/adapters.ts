@@ -16,7 +16,7 @@ export interface SessionOutput {
 export interface ClaudeSession { id: string; taskId: string; }
 
 export interface ClaudeAdapter {
-  startSession(task: TaskDefinition): Promise<Result<ClaudeSession>>;
+  startSession(task: TaskDefinition, cwd: string): Promise<Result<ClaudeSession>>;
   waitForStop(session: ClaudeSession): Promise<Result<SessionOutput>>;
   fix(session: ClaudeSession, errors: string): Promise<Result<SessionOutput>>;
   cleanup(session: ClaudeSession): Promise<Result<SessionOutput>>;
@@ -30,10 +30,12 @@ export interface GitAdapter {
   createBranch(name: string, from?: string): Promise<Result<BranchState>>;
   checkoutBranch(name: string): Promise<Result<void>>;
   checkoutBase(base: string): Promise<Result<void>>;
-  commit(message: string): Promise<Result<string>>;
+  commit(message: string, branch: string): Promise<Result<string>>;
+  commitBase(message: string, base: string): Promise<Result<string>>;
   getDiff(from: string, to?: string): Promise<Result<string>>;
   merge(branch: string, into: string): Promise<Result<string>>;
-  abortMerge(): Promise<Result<void>>;
+  prepareMerge(branch: string, into: string): Promise<Result<void>>;
+  abortMerge(into: string): Promise<Result<void>>;
   abandonBranch(branch: string): Promise<Result<void>>;
   rebaseAll(base: string, except: string): Promise<Result<void>>;
   currentBranch(): Promise<Result<string>>;
@@ -59,6 +61,7 @@ export interface TaskQueueAdapter {
   markStuck(taskId: string, reason: string, claimToken: string): Promise<Result<void>>;
   markBlocked(taskId: string, reason: string, details: Record<string, unknown>, claimToken: string): Promise<Result<void>>;
   requeueBlocked(taskId: string): Promise<Result<void>>;
+  approveBlocked(taskId: string): Promise<Result<void>>;
   releaseClaim(taskId: string, claimToken: string): Promise<Result<void>>;
   add(task: Omit<TaskDefinition, 'id' | 'createdAt'>): Promise<Result<TaskDefinition>>;
   ensureTask(dedupeKey: string, task: Omit<TaskDefinition, 'id' | 'createdAt'>): Promise<Result<TaskDefinition>>;

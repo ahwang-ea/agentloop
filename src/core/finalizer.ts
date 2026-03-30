@@ -3,12 +3,16 @@
 import { ok, err, type Result } from '../shared/result.js';
 import type {
   TaskDefinition, FinalizationState, NotificationType,
-  GitAdapter, NotifierAdapter, TaskQueueAdapter,
+  ClaudeAdapter, CodexAdapter, GitAdapter, NotifierAdapter, TaskQueueAdapter,
   AgentloopConfig,
 } from '../types/index.js';
 import { detectBehaviorChanges } from './behavior.js';
+import { prepareFeatureFinalization } from './feature-gate.js';
+import { runIntentCheck } from './intent-check.js';
 
 interface FinalizeDeps {
+  claude: ClaudeAdapter;
+  codex: CodexAdapter;
   git: GitAdapter;
   notifier: NotifierAdapter;
   queue: TaskQueueAdapter;
@@ -27,6 +31,10 @@ export async function finalize(
   d: FinalizeDeps, task: TaskDefinition, fin: FinalizationState, token: string,
 ): Promise<Result<void>> {
   const persist = async () => { fin.failCount = 0; return d.queue.updateFinalization(task.id, fin, token); };
+  if (task.feature) {
+    const feature = await prepareFeatureFinalization(d, task, fin, token);
+    if (!feature.ok || feature.value === 'done') return feature.ok ? ok(undefined) : feature;
+  }
   // Step 1: Detect behavior changes and send notification (idempotent via key)
   if (!fin.behaviorNotified) {
     const diff = await d.git.getDiff(`${fin.mergeCommit}~1`, fin.mergeCommit);
@@ -63,6 +71,12 @@ export async function finalize(
       `promotion:${task.id}:${fin.mergeCommit}`);
     if (!n.ok) return n;
     fin.completionNotified = true;
+    const uf = await persist(); if (!uf.ok) return uf;
+  }
+  if (task.feature && fin.featureMerged && !fin.intentChecked) {
+    const intent = await runIntentCheck(d.config, d.notifier, task.feature, fin.mergeCommit);
+    if (!intent.ok) return intent;
+    fin.intentChecked = true;
     const uf = await persist(); if (!uf.ok) return uf;
   }
   // Step 4: Rebase other branches (idempotent — rebaseAll is a no-op if already rebased)

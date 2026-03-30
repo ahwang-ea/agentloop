@@ -31,7 +31,8 @@ const improved = (prev: string[], next: string[]) => {
 };
 
 async function singleReviewPass(
-  d: ReviewDeps, session: ClaudeSession, task: TaskDefinition, conv: ConvergenceState, t0: number, token: string,
+  d: ReviewDeps, session: ClaudeSession, task: TaskDefinition,
+  conv: ConvergenceState, t0: number, cwd: string, token: string,
 ): Promise<Result<ReviewPass>> {
   const diff = await d.git.getDiff(d.config.baseBranch);
   if (!diff.ok) return err(diff.error.code, diff.error.message);
@@ -48,20 +49,21 @@ async function singleReviewPass(
     () => d.queue.renewClaim(task.id, token),
   ));
   if (!fix.ok) return err(fix.error.code, fix.error.message);
-  const vl = await verifyLoop(d, session, task.id, fix.value.tokensDelta, conv, t0, token);
+  const vl = await verifyLoop(d, session, task.id, fix.value.tokensDelta, conv, t0, cwd, token);
   if (!vl.ok) return vl as Result<never>;
   return ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() });
 }
 
 export async function reviewPhase(
-  d: ReviewDeps, session: ClaudeSession, task: TaskDefinition, conv: ConvergenceState, t0: number, token: string,
+  d: ReviewDeps, session: ClaudeSession, task: TaskDefinition,
+  conv: ConvergenceState, t0: number, cwd: string, token: string,
 ): Promise<Result<void>> {
   let prev: string[] | null = null, stalled = 0;
   const stallLimit = Math.max(1, d.config.convergence.stuckThreshold - 1);
   while (true) {
     if ((Date.now() - t0) / 1000 > d.config.convergence.maxWallClock)
       return err('BUDGET_EXCEEDED', 'Review wall clock exceeded');
-    const r = await singleReviewPass(d, session, task, conv, t0, token);
+    const r = await singleReviewPass(d, session, task, conv, t0, cwd, token);
     if (!r.ok) {
       if (r.error.code === 'REVIEW_CONFLICT') {
         const mb = await d.queue.markBlocked(task.id, r.error.message, r.error.details ?? {}, token);

@@ -5,6 +5,8 @@ import type { ConvergenceConfig } from './domain.js';
 export interface AgentloopConfig {
   repoPath: string;
   baseBranch: string;              // Configurable — not hard-coded to 'main'
+  branchPrefix: string;
+  worktreeRoot: string;
   verifyCommand: string;
   agentsMdPath: string;
   architectureMdPath?: string;

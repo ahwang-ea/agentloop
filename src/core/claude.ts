@@ -6,7 +6,7 @@ import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, ClaudeSession, SessionOutput, TaskDefinition } from '../types/index.js';
 import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
 
-interface StoredSession { initialPrompt: string; resumeId?: string; }
+interface StoredSession { initialPrompt: string; resumeId?: string; cwd: string; }
 interface TurnResult extends SessionOutput { sessionId: string; }
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const appEnv = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'agentloop/0.1.0' };
@@ -26,7 +26,7 @@ const stopReason = (raw: string | null, sawHook: boolean): SessionOutput['stopRe
   ? 'stop_hook' : raw === 'max_tokens' ? 'max_tokens' : raw === 'tool_use' ? 'tool_use' : 'end_turn';
 
 async function runTurn(
-  config: AgentloopConfig, prompt: string, resume: string | undefined, writable: boolean,
+  config: AgentloopConfig, cwd: string, prompt: string, resume: string | undefined, writable: boolean,
 ): Promise<Result<TurnResult>> {
   let text = '', tokensDelta = 0, sessionId = resume ?? '', hookStop = false;
   const changedFiles = new Set<string>();
@@ -34,7 +34,7 @@ async function runTurn(
     for await (const message of query({
       prompt,
       options: {
-        cwd: config.repoPath,
+        cwd,
         env: appEnv,
         maxTurns: writable ? 40 : 10,
         model: config.claudeModel,
@@ -63,14 +63,14 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
   const sessions = new Map<string, StoredSession>();
   const runSessionTurn = async (session: ClaudeSession, prompt: string): Promise<Result<SessionOutput>> => {
     const stored = sessions.get(session.id); if (!stored) return err('SESSION_ERROR', `Unknown Claude session ${session.id}`);
-    const turn = await runTurn(config, prompt, stored.resumeId, true); if (!turn.ok) return turn;
+    const turn = await runTurn(config, stored.cwd, prompt, stored.resumeId, true); if (!turn.ok) return turn;
     stored.resumeId = turn.value.sessionId;
     return ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason });
   };
   return {
-    async startSession(task) {
+    async startSession(task, cwd) {
       const id = randomUUID();
-      sessions.set(id, { initialPrompt: writePrompt(task) });
+      sessions.set(id, { initialPrompt: writePrompt(task), cwd });
       return ok({ id, taskId: task.id });
     },
     async waitForStop(session) {
@@ -85,11 +85,11 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
     cleanup: session => runSessionTurn(session, 'Do a final cleanup pass. Remove obvious dead code or debug leftovers, keep behavior unchanged, and stop when done.'),
     async review(request) {
       const started = Date.now();
-      const turn = await runTurn(config, buildReviewPrompt(request), undefined, false);
+      const turn = await runTurn(config, config.repoPath, buildReviewPrompt(request), undefined, false);
       return turn.ok ? parseReviewOutput(turn.value.text, request.role, (Date.now() - started) / 1000) : turn;
     },
     async chat(message) {
-      const turn = await runTurn(config, message, undefined, false);
+      const turn = await runTurn(config, config.repoPath, message, undefined, false);
       return turn.ok ? ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason }) : turn;
     },
   };

@@ -5,6 +5,8 @@ import { constants } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ok, err, type Result } from '../shared/result.js';
+import { writeInventory } from './scanner.js';
+import { runSmartInit, shouldRunSmartInit } from './smart-init.js';
 
 interface Summary { created: string[]; skipped: string[]; }
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -60,11 +62,21 @@ export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
     writeOnce(join(repoPath, 'ARCHITECTURE.md'), arch.value, summary),
     writeOnce(join(repoPath, 'verify.sh'), verify.value, summary, 0o755),
     copyOnce(asset('templates', 'claude-settings.json'), join(repoPath, '.claude', 'settings.json'), summary),
+    copyOnce(asset('templates', '.claude', 'commands', 'status.md'), join(repoPath, '.claude', 'commands', 'status.md'), summary),
+    copyOnce(asset('templates', '.claude', 'commands', 'queue.md'), join(repoPath, '.claude', 'commands', 'queue.md'), summary),
+    copyOnce(asset('templates', '.claude', 'commands', 'add-task.md'), join(repoPath, '.claude', 'commands', 'add-task.md'), summary),
+    copyOnce(asset('templates', '.claude', 'commands', 'recent.md'), join(repoPath, '.claude', 'commands', 'recent.md'), summary),
     copyOnce(asset('hooks', 'scope-check.py'), join(repoPath, '.agentloop', 'hooks', 'scope-check.py'), summary, 0o755),
     copyOnce(asset('hooks', 'on-stop.py'), join(repoPath, '.agentloop', 'hooks', 'on-stop.py'), summary, 0o755),
     writeOnce(join(repoPath, '.agentloop', 'current-scope.json'), JSON.stringify({ editableFiles: ['**/*'], readOnlyContext: [], forbiddenFiles: [] }, null, 2), summary),
     writeOnce(join(repoPath, '.agentloop', 'session-status.json'), JSON.stringify({ status: 'idle' }, null, 2), summary),
   ];
   for (const result of await Promise.all(files)) if (!result.ok) return result;
+  const inventory = await writeInventory(repoPath);
+  if (!inventory.ok) return inventory;
+  if (shouldRunSmartInit(inventory.value)) {
+    const smart = await runSmartInit(repoPath);
+    if (!smart.ok) return smart;
+  }
   return ok(summary);
 }
