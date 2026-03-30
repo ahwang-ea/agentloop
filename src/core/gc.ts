@@ -26,15 +26,19 @@ async function runGit(config: AgentloopConfig, args: string[]): Promise<Result<v
   catch (e) { const text = msg(e); return ignore(text) ? ok(undefined) : err('GIT_ERROR', text); }
 }
 async function record(label: string, work: () => Promise<Result<void>>) {
-  const result = await work();
-  if (!result.ok) console.error(`gc ${label}: ${result.error.message}`);
+  try {
+    const result = await work();
+    if (!result.ok) console.error(`gc ${label}: ${result.error.message}`);
+  } catch (e) { console.error(`gc ${label}: ${msg(e)}`); }
 }
 async function removeBranch(config: AgentloopConfig, branch: string): Promise<Result<void>> {
-  const path = worktreePathForBranch(config, branch);
-  const removed = await runGit(config, ['worktree', 'remove', '--force', path]);
-  if (!removed.ok) return removed;
-  await rm(path, { recursive: true, force: true });
-  return runGit(config, ['branch', '-d', withBranchPrefix(config, branch)]);
+  try {
+    const path = worktreePathForBranch(config, branch);
+    const removed = await runGit(config, ['worktree', 'remove', '--force', path]);
+    if (!removed.ok) return removed;
+    await rm(path, { recursive: true, force: true });
+    return runGit(config, ['branch', '-d', withBranchPrefix(config, branch)]);
+  } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
 async function baseDirs(root: string, current = root, found: string[] = []): Promise<string[]> {
   const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
@@ -62,63 +66,72 @@ export async function archiveOldTasks(config: AgentloopConfig, now = Date.now())
   catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? ok(undefined) : err('QUEUE_CORRUPT', `Malformed queue file ${path}`); }
   const archived = tasks.filter(task => !keepTask(task, cutoff));
   if (archived.length === 0) return ok(undefined);
-  await mkdir(join(config.repoPath, '.agentloop'), { recursive: true });
-  await appendFile(archivePath(config), `${archived.map(task => JSON.stringify({ archivedAt: new Date(now).toISOString(), task })).join('\n')}\n`, 'utf-8');
-  await writeFile(path, JSON.stringify(tasks.filter(task => keepTask(task, cutoff)), null, 2));
-  return ok(undefined);
+  try {
+    await mkdir(join(config.repoPath, '.agentloop'), { recursive: true });
+    await appendFile(archivePath(config), `${archived.map(task => JSON.stringify({ archivedAt: new Date(now).toISOString(), task })).join('\n')}\n`, 'utf-8');
+    await writeFile(path, JSON.stringify(tasks.filter(task => keepTask(task, cutoff)), null, 2));
+    return ok(undefined);
+  } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
 async function removeOrphanedBases(config: AgentloopConfig, queue: TaskQueueAdapter): Promise<Result<void>> {
-  const tasks = await queue.list(); if (!tasks.ok) return tasks;
-  const needed = new Set(tasks.value.filter(task => active.has(task.status)).map(task => baseFor(config, task)));
-  const root = join(worktreeRootPath(config), basename(config.repoPath), '_base');
-  for (const path of await baseDirs(root)) {
-    if (needed.has(rel(root, path))) continue;
-    const removed = await runGit(config, ['worktree', 'remove', '--force', path]);
-    if (!removed.ok) return removed;
-    await rm(path, { recursive: true, force: true });
-    await pruneParents(root, dirname(path));
-  }
-  return ok(undefined);
+  try {
+    const tasks = await queue.list(); if (!tasks.ok) return tasks;
+    const needed = new Set(tasks.value.filter(task => active.has(task.status)).map(task => baseFor(config, task)));
+    const root = join(worktreeRootPath(config), basename(config.repoPath), '_base');
+    for (const path of await baseDirs(root)) {
+      if (needed.has(rel(root, path))) continue;
+      const removed = await runGit(config, ['worktree', 'remove', '--force', path]);
+      if (!removed.ok) return removed;
+      await rm(path, { recursive: true, force: true });
+      await pruneParents(root, dirname(path));
+    }
+    return ok(undefined);
+  } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
 async function rotateMetrics(config: AgentloopConfig, now = Date.now()): Promise<Result<void>> {
-  const path = metricsPath(config); let info;
-  try { info = await stat(path); } catch { return ok(undefined); }
-  if (now - info.mtimeMs < 90 * day) return ok(undefined);
-  const dir = join(config.repoPath, '.agentloop', 'metrics-archive');
-  const base = `metrics-${new Date(info.mtimeMs).toISOString().slice(0, 10)}`;
-  let archive = join(dir, `${base}.jsonl`), suffix = 1;
-  while (await exists(archive)) archive = join(dir, `${base}-${suffix++}.jsonl`);
-  await mkdir(dir, { recursive: true });
-  await rename(path, archive);
-  await writeFile(path, '', 'utf-8');
-  return ok(undefined);
+  try {
+    const path = metricsPath(config); let info;
+    try { info = await stat(path); } catch { return ok(undefined); }
+    if (now - info.mtimeMs < 90 * day) return ok(undefined);
+    const dir = join(config.repoPath, '.agentloop', 'metrics-archive'), base = `metrics-${new Date(info.mtimeMs).toISOString().slice(0, 10)}`;
+    let archive = join(dir, `${base}.jsonl`), suffix = 1;
+    while (await exists(archive)) archive = join(dir, `${base}-${suffix++}.jsonl`);
+    await mkdir(dir, { recursive: true });
+    await rename(path, archive);
+    await writeFile(path, '', 'utf-8');
+    return ok(undefined);
+  } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
 async function cleanupFiles(config: AgentloopConfig, now = Date.now()): Promise<Result<void>> {
-  const notifications = notificationStatePath(config), tasks = taskFilePath(config), temp = new RegExp(`^${basename(tasks).replace('.', '\\.')}\\..+\\.tmp$`);
-  for (const dir of [dirname(notifications), dirname(tasks)]) for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    const path = join(dir, entry.name), age = await stat(path).then(info => now - info.mtimeMs).catch(() => 0);
-    if (entry.isDirectory() && entry.name.endsWith('.lock') && age > 5 * 60 * 1000) await rm(path, { recursive: true, force: true });
-    if (entry.isFile() && (entry.name === 'notifications.json.tmp' || temp.test(entry.name))) await rm(path, { force: true });
-  }
-  const agents = await exists(join(config.repoPath, config.agentsMdPath));
-  const architecture = config.architectureMdPath ? await exists(join(config.repoPath, config.architectureMdPath)) : true;
-  if (agents && architecture) {
-    await rm(join(config.repoPath, '.agentloop', 'drafts'), { recursive: true, force: true });
-    await rm(join(config.repoPath, '.agentloop', 'init-questions.json'), { force: true });
-    await rm(join(config.repoPath, '.agentloop', 'coverage.json'), { force: true });
-  }
-  return ok(undefined);
+  try {
+    const notifications = notificationStatePath(config), tasks = taskFilePath(config), temp = new RegExp(`^${basename(tasks).replace('.', '\\.')}\\..+\\.tmp$`);
+    for (const dir of [dirname(notifications), dirname(tasks)]) for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const path = join(dir, entry.name), age = await stat(path).then(info => now - info.mtimeMs).catch(() => 0);
+      if (entry.isDirectory() && entry.name.endsWith('.lock') && age > 5 * 60 * 1000) await rm(path, { recursive: true, force: true });
+      if (entry.isFile() && (entry.name === 'notifications.json.tmp' || temp.test(entry.name))) await rm(path, { force: true });
+    }
+    const agents = await exists(join(config.repoPath, config.agentsMdPath));
+    const architecture = config.architectureMdPath ? await exists(join(config.repoPath, config.architectureMdPath)) : true;
+    if (agents && architecture) {
+      await rm(join(config.repoPath, '.agentloop', 'drafts'), { recursive: true, force: true });
+      await rm(join(config.repoPath, '.agentloop', 'init-questions.json'), { force: true });
+      await rm(join(config.repoPath, '.agentloop', 'coverage.json'), { force: true });
+    }
+    return ok(undefined);
+  } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
 async function archiveResearch(config: AgentloopConfig, task: TaskDefinition, fin: FinalizationState): Promise<Result<void>> {
   if (!task.feature || !fin.featureMerged) return ok(undefined);
-  const feature = task.feature.toLowerCase().replace(/[^a-z0-9]+/g, ''), dir = join(config.repoPath, '.agentloop', 'research');
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []), archive = join(config.repoPath, '.agentloop', 'archive');
-  await mkdir(archive, { recursive: true });
-  for (const entry of entries.filter(item => item.isFile() && item.name.endsWith('.md'))) {
-    if (!entry.name.toLowerCase().replace(/[^a-z0-9]+/g, '').includes(feature)) continue;
-    await rename(join(dir, entry.name), join(archive, entry.name)).catch(() => rm(join(dir, entry.name), { force: true }));
-  }
-  return ok(undefined);
+  try {
+    const feature = task.feature.toLowerCase().replace(/[^a-z0-9]+/g, ''), dir = join(config.repoPath, '.agentloop', 'research');
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []), archive = join(config.repoPath, '.agentloop', 'archive');
+    await mkdir(archive, { recursive: true });
+    for (const entry of entries.filter(item => item.isFile() && item.name.endsWith('.md'))) {
+      if (!entry.name.toLowerCase().replace(/[^a-z0-9]+/g, '').includes(feature)) continue;
+      await rename(join(dir, entry.name), join(archive, entry.name)).catch(() => rm(join(dir, entry.name), { force: true }));
+    }
+    return ok(undefined);
+  } catch (e) { return err('TRANSPORT_ERROR', msg(e)); }
 }
 
 export async function gc(d: GcDeps, task: TaskDefinition, fin: FinalizationState): Promise<Result<void>> {
