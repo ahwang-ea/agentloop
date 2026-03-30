@@ -11,7 +11,8 @@
     "test": "node --experimental-vm-modules node_modules/.bin/jest --passWithNoTests --maxWorkers=100%",
     "lint": "eslint src/ --ext .ts",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build",
+    "e2e": "bash scripts/e2e-real.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.87",

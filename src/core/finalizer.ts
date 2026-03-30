@@ -85,7 +85,7 @@ export async function finalize(
     const uf = await persist(); if (!uf.ok) return uf;
   }
   if (task.feature && fin.featureMerged && !fin.intentChecked) {
-    const intent = await runIntentCheck(d.config, d.notifier, task.feature, fin.mergeCommit);
+    const intent = await runIntentCheck(d.config, d.git, d.notifier, task.feature, fin.mergeCommit);
     if (!intent.ok) return intent;
     fin.intentChecked = true;
     const uf = await persist(); if (!uf.ok) return uf;

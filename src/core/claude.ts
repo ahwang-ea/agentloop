@@ -8,8 +8,8 @@ import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
 import { buildScaffoldPrompt, parseScaffoldOutput } from './scaffold.js';
 import { cleanupPrompt, buildWritePrompt } from './writer-prompt.js';
 
-type ToolMode = 'readonly' | 'write' | 'research';
-interface StoredSession { initialPrompt: string; resumeId?: string; cwd: string; taskId: string; mode: Exclude<ToolMode, 'readonly'>; }
+type ToolMode = 'readonly' | 'write' | 'research' | 'prompt';
+interface StoredSession { initialPrompt: string; resumeId?: string; cwd: string; taskId: string; mode: Exclude<ToolMode, 'readonly' | 'prompt'>; }
 interface TurnResult extends SessionOutput { sessionId: string; }
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const RESEARCH_TOOLS = ['Read', 'Grep', 'Glob', 'Write', 'Edit', 'MultiEdit', 'Bash', 'WebSearch'];
@@ -18,15 +18,21 @@ const tokenCount = (usage: unknown) => ['input_tokens', 'output_tokens', 'cache_
   .reduce((sum, key) => sum + (typeof (usage as Record<string, unknown> | null)?.[key] === 'number' ? Number((usage as Record<string, unknown>)[key]) : 0), 0);
 const stopReason = (raw: string | null, sawHook: boolean): SessionOutput['stopReason'] => sawHook
   ? 'stop_hook' : raw === 'max_tokens' ? 'max_tokens' : raw === 'tool_use' ? 'tool_use' : 'end_turn';
-const tools = (mode: ToolMode): string[] | { type: 'preset'; preset: 'claude_code' } => mode === 'write' ? { type: 'preset', preset: 'claude_code' } : mode === 'research' ? RESEARCH_TOOLS : READ_ONLY_TOOLS;
+const tools = (mode: ToolMode): string[] | { type: 'preset'; preset: 'claude_code' } => mode === 'write' ? { type: 'preset', preset: 'claude_code' } : mode === 'research' ? RESEARCH_TOOLS : mode === 'prompt' ? [] : READ_ONLY_TOOLS;
+const agentic = (mode: ToolMode) => mode === 'write' || mode === 'research';
+const READ_ONLY_TURNS = 10;
+const WRITE_TURNS = 40;
+const SCAFFOLD_TIMEOUT_MS = 30_000;
+const REVIEW_TIMEOUT_MS = 60_000;
 
 async function runTurn(
-  config: AgentloopConfig, cwd: string, prompt: string, resume: string | undefined, mode: ToolMode,
+  config: AgentloopConfig, cwd: string, prompt: string, resume: string | undefined, mode: ToolMode, timeoutMs?: number,
 ): Promise<Result<TurnResult>> {
   let text = '', tokensDelta = 0, sessionId = resume ?? '', hookStop = false;
-  const changedFiles = new Set<string>();
+  const changedFiles = new Set<string>(), abortController = new AbortController();
+  const timer = timeoutMs ? setTimeout(() => abortController.abort(), timeoutMs) : undefined;
   try {
-    for await (const message of query({ prompt, options: { cwd, env: appEnv, maxTurns: mode === 'readonly' ? 10 : 40, model: config.claudeModel, permissionMode: mode === 'readonly' ? 'dontAsk' : 'acceptEdits', settingSources: ['project'], tools: tools(mode), resume } })) {
+    for await (const message of query({ prompt, options: { abortController, cwd, env: appEnv, maxTurns: agentic(mode) ? WRITE_TURNS : READ_ONLY_TURNS, model: config.claudeModel, permissionMode: agentic(mode) ? 'acceptEdits' : 'dontAsk', settingSources: agentic(mode) ? ['project'] : undefined, tools: tools(mode), resume } })) {
       if (message.type === 'system' && message.subtype === 'files_persisted') message.files.forEach(file => changedFiles.add(file.filename));
       if (message.type === 'system' && message.subtype === 'hook_response' && message.hook_event === 'Stop') hookStop = true;
       if (message.type !== 'result') continue;
@@ -36,7 +42,11 @@ async function runTurn(
       text = message.result;
       return ok({ text, tokensDelta, changedFiles: [...changedFiles], stopReason: stopReason(message.stop_reason, hookStop), sessionId });
     }
-  } catch (e) { return err('SESSION_ERROR', `Claude query failed: ${e instanceof Error ? e.message : 'unknown error'}`); }
+  } catch (e) {
+    return abortController.signal.aborted && timeoutMs
+      ? err('BUDGET_EXCEEDED', `Claude ${mode} timed out after ${Math.round(timeoutMs / 1000)}s`)
+      : err('SESSION_ERROR', `Claude query failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+  } finally { if (timer) clearTimeout(timer); }
   return err('EMPTY_RESPONSE', 'Claude query returned no result');
 }
 
@@ -71,7 +81,7 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
     cleanup: session => runSessionTurn(session, cleanupPrompt),
     async review(request) {
       const started = Date.now();
-      const turn = await runTurn(config, config.repoPath, buildReviewPrompt(request), undefined, 'readonly');
+      const turn = await runTurn(config, config.repoPath, buildReviewPrompt(request), undefined, 'prompt', REVIEW_TIMEOUT_MS);
       return turn.ok ? parseReviewOutput(turn.value.text, request.role, (Date.now() - started) / 1000) : turn;
     },
     async chat(message) {
@@ -79,7 +89,7 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
       return turn.ok ? ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason }) : turn;
     },
     async scaffold(task) {
-      const turn = await runTurn(config, config.repoPath, buildScaffoldPrompt(task), undefined, 'readonly');
+      const turn = await runTurn(config, config.repoPath, buildScaffoldPrompt(task), undefined, 'readonly', SCAFFOLD_TIMEOUT_MS);
       return turn.ok ? parseScaffoldOutput(turn.value.text) : turn;
     },
     async evictTaskSessions(taskId) {

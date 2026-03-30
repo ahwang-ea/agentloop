@@ -5,3 +5,4 @@ dist/
 *.d.ts
 *.map
 !jest.config.js
+.env.e2e

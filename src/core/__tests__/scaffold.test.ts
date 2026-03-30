@@ -9,6 +9,7 @@ const task = {
   id: 'task-1',
   title: 'Add parser',
   description: 'Implement a parser.',
+  type: 'implement' as const,
   scope: { editableFiles: ['src/**/*'], readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: ['Parser handles empty input.'],
   priority: 'medium' as const,

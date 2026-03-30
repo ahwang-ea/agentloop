@@ -10,7 +10,7 @@ import type {
 } from '../types/index.js';
 import { learningsAddendum } from './learnings.js';
 import { checkScope } from './scope.js';
-import { buildWritePrompt, cleanupPrompt } from './writer-prompt.js';
+import { buildCleanupPrompt, buildWritePrompt } from './writer-prompt.js';
 
 export interface WriterDeps {
   claude: ClaudeAdapter;
@@ -63,5 +63,5 @@ export async function runWriterCleanup(
 ): Promise<Result<WriterOutput>> {
   return !d.config.useCodexWriter
     ? session ? checked(d, task, cwd, await d.claude.cleanup(session)) : err('SESSION_ERROR', 'Missing Claude session for cleanup')
-    : runWriterFix(d, session, task, cleanupPrompt, cwd);
+    : runWriterFix(d, session, task, buildCleanupPrompt(task), cwd);
 }

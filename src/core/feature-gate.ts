@@ -7,7 +7,7 @@ import { mergeFeatureAtomically } from './feature-merge.js';
 import { diffInventories, needsArchitectureUpdate } from './inventory-diff.js';
 import { ensureIntentBaseline } from './intent-check.js';
 import { scanRepo } from './scanner.js';
-import { baseWorktreePath, worktreePathForBranch } from './worktree.js';
+import { worktreePathForBranch } from './worktree.js';
 
 interface FeatureDeps {
   claude: ClaudeAdapter;
@@ -36,7 +36,7 @@ export async function prepareFeatureFinalization(
     return done.ok ? ok('done') : done;
   }
   const base = await d.git.checkoutBase(d.config.baseBranch); if (!base.ok) return base;
-  const before = await scanRepo(baseWorktreePath(d.config, d.config.baseBranch)); if (!before.ok) return before;
+  const before = await scanRepo(base.value); if (!before.ok) return before;
   const diff = await d.git.getDiff(d.config.baseBranch, fin.featureBranch ?? fin.mergeInto); if (!diff.ok) return diff;
   const reviews = await runSequentialReviews(d, gateTask(task), diff.value); if (!reviews.ok) return reviews;
   const resolved = resolveConflicts(reviews.value.flatMap(review => review.findings));
@@ -69,7 +69,7 @@ export async function prepareFeatureFinalization(
     return blocked.ok ? ok('done') : blocked;
   }
   const merged = await mergeFeatureAtomically(d.git, fin.featureBranch ?? fin.mergeInto, d.config.baseBranch, `merge: ${feature}`,
-    updateDocs ? () => refreshFeatureDocs(d.claude, d.config.verifyCommand, baseWorktreePath(d.config, d.config.baseBranch), feature, delta) : undefined);
+    updateDocs ? () => refreshFeatureDocs(d.claude, d.config.verifyCommand, base.value, feature, delta) : undefined);
   if (!merged.ok) return merged;
   Object.assign(fin, { mergeCommit: merged.value, mergeInto: d.config.baseBranch, branch: fin.featureBranch ?? fin.branch, featureMerged: true, rebaseDone: false });
   const saved = await persist();

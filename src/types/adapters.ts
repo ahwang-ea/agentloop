@@ -48,10 +48,10 @@ export interface CodexWriterAdapter {
 export interface GitAdapter {
   createBranch(name: string, from?: string): Promise<Result<BranchState>>;
   checkoutBranch(name: string): Promise<Result<void>>;
-  checkoutBase(base: string): Promise<Result<void>>;
+  checkoutBase(base: string): Promise<Result<string>>;
   commit(message: string, branch: string): Promise<Result<string>>;
   commitBase(message: string, base: string): Promise<Result<string>>;
-  getDiff(from: string, to?: string): Promise<Result<string>>;
+  getDiff(from: string, to?: string, cwd?: string): Promise<Result<string>>;
   merge(branch: string, into: string): Promise<Result<string>>;
   prepareMerge(branch: string, into: string): Promise<Result<void>>;
   abortMerge(into: string): Promise<Result<void>>;

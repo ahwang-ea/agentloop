@@ -12,6 +12,7 @@ export function buildReviewPrompt(request: ReviewRequest): string {
   return [
     `You are the ${label(request.role)}.`,
     'Review the proposed diff against the task, AGENTS.md, and ARCHITECTURE.md when present.',
+    'Use only the provided task, AGENTS.md, ARCHITECTURE.md, and diff text; do not inspect the repo or call tools.',
     'Return ONLY JSON: {"findings":[...]} and use [] when clean.',
     'Finding shape: severity(issue|suggestion), description, optional file, optional line.',
     'Issue findings MUST include topicKey and action(change|keep|remove|rename|extract).',
