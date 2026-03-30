@@ -2,8 +2,15 @@
 
 import type { Result } from '../shared/result.js';
 import type {
-  TaskDefinition, TaskState, TaskStatus, FinalizationState,
-  ReviewRequest, ReviewResult, ReviewFinding, BranchState, Notification,
+  BranchState,
+  FinalizationState,
+  Notification,
+  ReviewFinding,
+  ReviewRequest,
+  ReviewResult,
+  TaskDefinition,
+  TaskState,
+  TaskStatus,
 } from './domain.js';
 
 export interface SessionOutput {
@@ -16,7 +23,7 @@ export interface SessionOutput {
 export interface ClaudeSession { id: string; taskId: string; }
 
 export interface ClaudeAdapter {
-  startSession(task: TaskDefinition, cwd: string): Promise<Result<ClaudeSession>>;
+  startSession(task: TaskDefinition, cwd: string, reuse?: ClaudeSession): Promise<Result<ClaudeSession>>;
   waitForStop(session: ClaudeSession): Promise<Result<SessionOutput>>;
   fix(session: ClaudeSession, errors: string): Promise<Result<SessionOutput>>;
   cleanup(session: ClaudeSession): Promise<Result<SessionOutput>>;

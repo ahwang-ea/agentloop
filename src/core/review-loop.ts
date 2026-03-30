@@ -2,11 +2,21 @@
 
 import { ok, err, type Result } from '../shared/result.js';
 import type {
-  TaskDefinition, ConvergenceState, TaskStatus, SessionOutput, ReviewFinding,
-  ClaudeAdapter, ClaudeSession, CodexAdapter, GitAdapter, TaskQueueAdapter, AgentloopConfig,
+  AgentloopConfig,
+  ClaudeAdapter,
+  ClaudeSession,
+  CodexAdapter,
+  ConvergenceState,
+  GitAdapter,
+  ReviewFinding,
+  SessionOutput,
+  TaskDefinition,
+  TaskQueueAdapter,
+  TaskStatus,
 } from '../types/index.js';
 import { logTaskMetrics, recordReviewFindings, recordSessionChanges } from './metrics.js';
-import { runParallelReviews, formatFixPrompt, resolveConflicts } from './reviewer.js';
+import { formatFixPrompt, resolveConflicts, runParallelReviews } from './reviewer.js';
+import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { verifyLoop, type VerifyDeps } from './verify-loop.js';
 import { withLease } from './lease.js';
 
@@ -33,7 +43,7 @@ const improved = (prev: string[], next: string[]) => {
 
 async function singleReviewPass(
   d: ReviewDeps, session: ClaudeSession, task: TaskDefinition,
-  conv: ConvergenceState, t0: number, cwd: string, token: string,
+  conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<ReviewPass>> {
   const diff = await d.git.getDiff(d.config.baseBranch);
   if (!diff.ok) return err(diff.error.code, diff.error.message);
@@ -53,24 +63,25 @@ async function singleReviewPass(
     () => d.queue.renewClaim(task.id, token),
   ));
   if (!fix.ok) return err(fix.error.code, fix.error.message);
+  addTaskTokens(usage, fix.value.tokensDelta);
   recordSessionChanges(conv, fix.value.changedFiles);
   const saved = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
   if (!saved.ok) return saved;
-  const vl = await verifyLoop(d, session, task.id, fix.value.tokensDelta, conv, t0, cwd, token);
+  const vl = await verifyLoop(d, session, task.id, fix.value.tokensDelta, conv, t0, cwd, token, usage);
   if (!vl.ok) return vl as Result<never>;
   return ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() });
 }
 
 export async function reviewPhase(
   d: ReviewDeps, session: ClaudeSession, task: TaskDefinition,
-  conv: ConvergenceState, t0: number, cwd: string, token: string,
+  conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<void>> {
   let prev: string[] | null = null, stalled = 0;
   const stallLimit = Math.max(1, d.config.convergence.stuckThreshold - 1);
   while (true) {
     if ((Date.now() - t0) / 1000 > d.config.convergence.maxWallClock)
       return err('BUDGET_EXCEEDED', 'Review wall clock exceeded');
-    const r = await singleReviewPass(d, session, task, conv, t0, cwd, token);
+    const r = await singleReviewPass(d, session, task, conv, t0, cwd, token, usage);
     if (!r.ok) {
       if (r.error.code === 'REVIEW_CONFLICT') {
         const mb = await d.queue.markBlocked(task.id, r.error.message, r.error.details ?? {}, token);

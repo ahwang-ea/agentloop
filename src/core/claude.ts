@@ -68,7 +68,12 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
     return ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason });
   };
   return {
-    async startSession(task, cwd) {
+    async startSession(task, cwd, reuse) {
+      const stored = reuse ? sessions.get(reuse.id) : undefined;
+      if (stored) {
+        Object.assign(stored, { initialPrompt: writePrompt(task), cwd, taskId: task.id });
+        return ok({ id: reuse!.id, taskId: task.id });
+      }
       const id = randomUUID();
       sessions.set(id, { initialPrompt: writePrompt(task), cwd, taskId: task.id });
       return ok({ id, taskId: task.id });

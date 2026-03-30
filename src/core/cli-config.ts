@@ -17,6 +17,8 @@ export const DEFAULT_CONFIG: AgentloopConfig = {
   taskSource: 'file',
   taskFilePath: 'tasks.json',
   maxParallelAgents: 2,
+  maxTasksPerSession: 3,
+  maxTokensPerSession: 100000,
   parallelVerify: true,
   sweepInterval: 10,
 };

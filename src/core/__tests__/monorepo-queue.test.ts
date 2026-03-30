@@ -13,7 +13,7 @@ const config = (repoPath: string) => ({
   architectureMdPath: 'ARCHITECTURE.md',
   claudeModel: 'c', codexModel: 'o', codexEnabled: true,
   convergence: { maxWallClock: 1, maxTokens: 1, stuckThreshold: 1, thrashOverlapRatio: 0.5 },
-  taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 1, parallelVerify: true, sweepInterval: 1,
+  taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 1, maxTasksPerSession: 3, maxTokensPerSession: 100000, parallelVerify: true, sweepInterval: 1,
 });
 const inventory = {
   scannedAt: '', files: [], monorepo: true,

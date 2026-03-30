@@ -1,13 +1,21 @@
 // orchestrator.ts — Core state machine. Each transition is code, not a prompt.
 import type {
-  AgentloopConfig, ClaimedActionableTask, ClaudeAdapter, CodexAdapter,
-  FinalizationState, GitAdapter, NotifierAdapter, TaskDefinition, TaskQueueAdapter,
+  AgentloopConfig,
+  ClaimedActionableTask,
+  ClaudeAdapter,
+  CodexAdapter,
+  FinalizationState,
+  GitAdapter,
+  NotifierAdapter,
+  TaskDefinition,
+  TaskQueueAdapter,
 } from './types/index.js';
 import { ok, err, type Result } from './shared/result.js';
 import { finalize } from './core/finalizer.js';
 import { featureBranchName } from './core/feature.js';
 import { logTaskMetrics } from './core/metrics.js';
 import { architectSweep } from './core/sweep.js';
+import { emptyWarmSession, newTaskUsage, pickWarmSession, recordWarmSession, type WarmSessionState } from './core/session-budget.js';
 import { runTask } from './core/task-runner.js';
 import { taskBranchName, worktreePathForBranch } from './core/worktree.js';
 
@@ -20,6 +28,7 @@ export interface Deps {
   config: AgentloopConfig;
 }
 interface SharedState { sweepCounter: number; sweep?: Promise<Result<void>>; }
+interface WorkerState { warm: WarmSessionState; }
 const MAX_FINALIZE_RETRIES = 3;
 const pending = new Set(['queued', 'writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging', 'finalizing']);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -62,7 +71,7 @@ async function maybeSweep(d: Deps, shared: SharedState): Promise<Result<void>> {
   shared.sweepCounter = 0;
   return runSweep(d, shared);
 }
-async function handleClaim(d: Deps, claimed: ClaimedActionableTask): Promise<Result<boolean>> {
+async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: WorkerState): Promise<Result<boolean>> {
   const { state, claimToken } = claimed;
   if (state.status === 'finalizing') {
     const done = await finalize(d, state.task, state.finalization, claimToken);
@@ -84,7 +93,9 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask): Promise<Res
   if (!checkout.ok) return escalate(d, state.task, checkout.error.message, claimToken);
   const progress = await d.queue.updateProgress(state.task.id, { branch, round: state.round, convergence: state.convergence }, claimToken);
   if (!progress.ok) return progress;
-  const result = await runTask(d, state.task, branch, base, worktreePath, state.convergence, claimToken);
+  const usage = newTaskUsage();
+  const result = await runTask(d, state.task, branch, base, worktreePath, state.convergence, claimToken, pickWarmSession(worker.warm, state.task.feature), usage);
+  worker.warm = result.ok ? recordWarmSession(worker.warm, state.task.feature, usage.session, usage.tokens, d.config) : emptyWarmSession();
   if (result.ok) return ok(true);
   if (result.error.code === 'FINALIZATION_PERSIST_FAILED') return escalate(d, state.task, result.error.message, claimToken);
   if (result.error.code === 'REVIEW_CONFLICT' || result.error.code === 'REVIEW_STUCK') return ok(false);
@@ -95,6 +106,7 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask): Promise<Res
   return escalate(d, state.task, reason, claimToken);
 }
 async function runWorker(d: Deps, shared: SharedState): Promise<Result<void>> {
+  const worker = { warm: emptyWarmSession() };
   while (true) {
     const c = await claim(d);
     if (!c.ok) { await notify(d, undefined, `Queue error: ${c.error.code}`, c.error.message); return c; }
@@ -102,7 +114,7 @@ async function runWorker(d: Deps, shared: SharedState): Promise<Result<void>> {
       const next = await waitForWork(d, shared); if (!next.ok || next.value === 'stop') return next.ok ? ok(undefined) : next;
       continue;
     }
-    const handled = await handleClaim(d, c.value); if (!handled.ok) return handled;
+    const handled = await handleClaim(d, c.value, worker); if (!handled.ok) return handled;
     if (handled.value) { const swept = await maybeSweep(d, shared); if (!swept.ok) return swept; }
   }
 }

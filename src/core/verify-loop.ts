@@ -2,12 +2,18 @@
 
 import { ok, err, type Result } from '../shared/result.js';
 import type {
-  ConvergenceState, TaskStatus, SessionOutput,
-  ClaudeAdapter, ClaudeSession, TaskQueueAdapter, AgentloopConfig,
+  AgentloopConfig,
+  ClaudeAdapter,
+  ClaudeSession,
+  ConvergenceState,
+  SessionOutput,
+  TaskQueueAdapter,
+  TaskStatus,
 } from '../types/index.js';
 import { classifyConvergence, trackRound, shouldWebSearch } from './convergence.js';
 import { withLease } from './lease.js';
 import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
+import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { runVerify } from './verifier.js';
 
 export interface VerifyDeps {
@@ -25,7 +31,7 @@ const setStatus = (d: VerifyDeps, id: string, s: TaskStatus, token: string) =>
 
 export async function verifyLoop(
   d: VerifyDeps, session: ClaudeSession, taskId: string,
-  initTokensDelta: number, conv: ConvergenceState, t0: number, cwd: string, token: string,
+  initTokensDelta: number, conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
 ): Promise<Result<void>> {
   const { convergence: cc } = d.config;
   let lastTokensDelta = initTokensDelta;
@@ -58,6 +64,7 @@ export async function verifyLoop(
     ));
     if (!fix.ok) return err(fix.error.code, fix.error.message);
     lastTokensDelta = fix.value.tokensDelta;
+    addTaskTokens(usage, fix.value.tokensDelta);
     recordSessionChanges(conv, fix.value.changedFiles);
     const fp = await d.queue.updateProgress(taskId, { round: conv.rounds.length, convergence: conv }, token);
     if (!fp.ok) return fp;

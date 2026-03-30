@@ -13,7 +13,7 @@ const config = (repoPath: string) => ({
   architectureMdPath: 'ARCHITECTURE.md',
   claudeModel: 'c', codexModel: 'o', codexEnabled: true,
   convergence: { maxWallClock: 1, maxTokens: 1, stuckThreshold: 1, thrashOverlapRatio: 0.5 },
-  taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 2, parallelVerify: true, sweepInterval: 1,
+  taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 2, maxTasksPerSession: 3, maxTokensPerSession: 100000, parallelVerify: true, sweepInterval: 1,
 });
 
 test('approves blocked finalization tasks back into finalizing', async () => {

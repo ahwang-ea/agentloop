@@ -1,7 +1,8 @@
-import type { ConvergenceState, FinalizationState, SessionOutput, TaskDefinition } from '../types/index.js';
+import type { ClaudeSession, ConvergenceState, FinalizationState, SessionOutput, TaskDefinition } from '../types/index.js';
 import type { Deps } from '../orchestrator.js';
 import { ok, err, type Result } from '../shared/result.js';
 import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
+import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { withLease } from './lease.js';
 import { reviewPhase } from './review-loop.js';
 import { runVerify } from './verifier.js';
@@ -12,7 +13,7 @@ const chk = (r: Result<SessionOutput>): Result<SessionOutput> =>
 
 export async function runTask(
   d: Deps, task: TaskDefinition, branch: string, mergeInto: string, worktreePath: string,
-  seed: ConvergenceState | undefined, token: string,
+  seed: ConvergenceState | undefined, token: string, warmSession: ClaudeSession | undefined, usage: TaskUsage,
 ): Promise<Result<void>> {
   const conv = seed ?? {
     rounds: [],
@@ -23,22 +24,25 @@ export async function runTask(
     changedFiles: [],
   };
   const t0 = Date.now();
-  const session = await d.claude.startSession(task, worktreePath); if (!session.ok) return session;
+  const session = await d.claude.startSession(task, worktreePath, warmSession); if (!session.ok) return session;
+  usage.session = session.value;
   const stopped = chk(await withLease(() => d.claude.waitForStop(session.value), () => d.queue.renewClaim(task.id, token)));
   if (!stopped.ok) return err(stopped.error.code, stopped.error.message);
+  addTaskTokens(usage, stopped.value.tokensDelta);
   recordSessionChanges(conv, stopped.value.changedFiles);
   let p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   let s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  let r = await verifyLoop(d, session.value, task.id, stopped.value.tokensDelta, conv, t0, worktreePath, token); if (!r.ok) return r;
+  let r = await verifyLoop(d, session.value, task.id, stopped.value.tokensDelta, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   s = await d.queue.updateStatus(task.id, 'reviewing', token); if (!s.ok) return s;
-  r = await reviewPhase(d, session.value, task, conv, t0, worktreePath, token); if (!r.ok) return r;
+  r = await reviewPhase(d, session.value, task, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   s = await d.queue.updateStatus(task.id, 'cleanup', token); if (!s.ok) return s;
   const cleanup = chk(await withLease(() => d.claude.cleanup(session.value), () => d.queue.renewClaim(task.id, token)));
   if (!cleanup.ok) return err(cleanup.error.code, cleanup.error.message);
+  addTaskTokens(usage, cleanup.value.tokensDelta);
   recordSessionChanges(conv, cleanup.value.changedFiles);
   p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
   s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  r = await verifyLoop(d, session.value, task.id, cleanup.value.tokensDelta, conv, t0, worktreePath, token); if (!r.ok) return r;
+  r = await verifyLoop(d, session.value, task.id, cleanup.value.tokensDelta, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   const fv = await runVerify(d.config.verifyCommand, worktreePath); if (!fv.ok) return fv;
   if (!fv.value.pass) {
     recordVerifyErrors(conv, fv.value.errors);
