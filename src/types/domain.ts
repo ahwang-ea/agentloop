@@ -62,6 +62,11 @@ export interface ConvergenceState {
 }
 export interface ConvergenceConfig { maxWallClock: number; maxTokens: number; stuckThreshold: number; thrashOverlapRatio: number; }
 
+export interface ScaffoldOutput { files: ScaffoldFile[]; }
+export type ScaffoldFile =
+  | { type: 'types' | 'stub' | 'test'; path: string; content: string }
+  | { type: 'golden-copy'; path: string; referencePath: string };
+
 export interface VerifyResult { pass: boolean; output: string; errors: VerifyError[]; duration: number; }
 export interface VerifyError { source: 'typecheck' | 'test' | 'lint' | 'build' | 'doc-freshness'; message: string; file?: string; line?: number; hash: string; }
 

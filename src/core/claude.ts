@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, ClaudeSession, SessionOutput, WriterOutput } from '../types/index.js';
+import { buildScaffoldPrompt, parseScaffoldOutput } from './scaffold.js';
 import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
 import { cleanupPrompt, buildWritePrompt } from './writer-prompt.js';
 
@@ -86,6 +87,10 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
     async chat(message) {
       const turn = await runTurn(config, config.repoPath, message, undefined, false);
       return turn.ok ? ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason }) : turn;
+    },
+    async scaffold(task) {
+      const turn = await runTurn(config, config.repoPath, buildScaffoldPrompt(task), undefined, false);
+      return turn.ok ? parseScaffoldOutput(turn.value.text) : turn;
     },
     async evictTaskSessions(taskId) {
       for (const [sessionId, stored] of sessions.entries()) if (stored.taskId === taskId) sessions.delete(sessionId);

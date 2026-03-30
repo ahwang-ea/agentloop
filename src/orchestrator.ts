@@ -96,7 +96,7 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: Work
   const progress = await d.queue.updateProgress(state.task.id, { branch, round: state.round, convergence: state.convergence }, claimToken);
   if (!progress.ok) return progress;
   const usage = newTaskUsage();
-  const result = await runTask(d, state.task, branch, base, worktreePath, state.convergence, claimToken, pickWarmSession(worker.warm, state.task.feature), usage);
+  const result = await runTask(d, state.task, branch, base, worktreePath, state.convergence, claimToken, pickWarmSession(worker.warm, state.task.feature), usage, !state.branch);
   worker.warm = result.ok ? recordWarmSession(worker.warm, state.task.feature, usage.session, usage.tokens, d.config) : emptyWarmSession();
   if (result.ok) return ok(true);
   if (result.error.code === 'FINALIZATION_PERSIST_FAILED') return escalate(d, state.task, result.error.message, claimToken);

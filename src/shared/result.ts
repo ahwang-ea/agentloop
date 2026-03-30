@@ -9,6 +9,7 @@ export type ErrorCode =
   | 'REVIEW_CONFLICT' | 'REVIEW_STUCK' | 'SWEEP_PARSE_ERROR' | 'NOTIFY_FAILED'
   | 'FINALIZATION_PERSIST_FAILED'
   | 'GIT_ERROR'
+  | 'NOT_IMPLEMENTED'
   | 'UNKNOWN';
 
 export interface OrchestratorError {

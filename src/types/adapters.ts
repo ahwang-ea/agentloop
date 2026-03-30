@@ -9,6 +9,7 @@ import type {
   ReviewRequest,
   ReviewResult,
   TaskDefinition,
+  ScaffoldOutput,
   TaskState,
   TaskStatus,
 } from './domain.js';
@@ -33,6 +34,7 @@ export interface ClaudeAdapter {
   cleanup(session: ClaudeSession): Promise<Result<WriterOutput>>;
   review(request: ReviewRequest): Promise<Result<ReviewResult>>;
   chat(message: string): Promise<Result<SessionOutput>>;
+  scaffold(task: TaskDefinition): Promise<Result<ScaffoldOutput>>;
   evictTaskSessions(taskId: string): Promise<Result<void>>;
 }
 
