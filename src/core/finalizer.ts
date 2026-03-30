@@ -9,6 +9,7 @@ import type {
 import { detectBehaviorChanges } from './behavior.js';
 import { prepareFeatureFinalization } from './feature-gate.js';
 import { runIntentCheck } from './intent-check.js';
+import { logInferredTaskMetrics, logTaskMetrics } from './metrics.js';
 
 interface FinalizeDeps {
   claude: ClaudeAdapter;
@@ -33,7 +34,11 @@ export async function finalize(
   const persist = async () => { fin.failCount = 0; return d.queue.updateFinalization(task.id, fin, token); };
   if (task.feature) {
     const feature = await prepareFeatureFinalization(d, task, fin, token);
-    if (!feature.ok || feature.value === 'done') return feature.ok ? ok(undefined) : feature;
+    if (!feature.ok) return feature;
+    if (feature.value === 'done') {
+      const logged = await logInferredTaskMetrics(d.config, d.queue, task); if (!logged.ok) console.error(logged.error.message);
+      return ok(undefined);
+    }
   }
   // Step 1: Detect behavior changes and send notification (idempotent via key)
   if (!fin.behaviorNotified) {
@@ -86,5 +91,8 @@ export async function finalize(
     fin.rebaseDone = true;
     const uf = await persist(); if (!uf.ok) return uf;
   }
-  return d.queue.markDone(task.id, token);
+  const done = await d.queue.markDone(task.id, token);
+  if (!done.ok) return done;
+  const logged = await logTaskMetrics(d.config, d.queue, task, 'merged'); if (!logged.ok) console.error(logged.error.message);
+  return ok(undefined);
 }

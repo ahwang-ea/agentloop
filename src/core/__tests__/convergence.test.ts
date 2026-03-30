@@ -12,6 +12,9 @@ const makeState = (hashes: string[][], classification: ConvergenceState['classif
   rounds: hashes.map((set, index) => makeRound(index + 1, set)),
   classification,
   webSearchTriggered: false,
+  reviewFindings: 0,
+  errorTypes: [],
+  changedFiles: [],
 });
 
 describe('classifyConvergence', () => {

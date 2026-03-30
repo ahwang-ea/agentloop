@@ -6,6 +6,7 @@ import type {
 import { ok, err, type Result } from './shared/result.js';
 import { finalize } from './core/finalizer.js';
 import { featureBranchName } from './core/feature.js';
+import { logTaskMetrics } from './core/metrics.js';
 import { architectSweep } from './core/sweep.js';
 import { runTask } from './core/task-runner.js';
 import { taskBranchName, worktreePathForBranch } from './core/worktree.js';
@@ -31,6 +32,7 @@ async function notify(d: Deps, taskId: string | undefined, summary: string, deta
 async function escalate(d: Deps, task: TaskDefinition, reason: string, token: string): Promise<Result<boolean>> {
   const stuck = await d.queue.markStuck(task.id, reason, token);
   if (!stuck.ok) return err(stuck.error.code, `markStuck: ${stuck.error.message}`);
+  const logged = await logTaskMetrics(d.config, d.queue, task, 'stuck'); if (!logged.ok) console.error(logged.error.message);
   const notice = await notify(d, task.id, `Stuck: ${task.title}`, reason);
   return notice.ok ? ok(false) : notice;
 }

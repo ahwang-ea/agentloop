@@ -7,6 +7,7 @@ import type {
 } from '../types/index.js';
 import { classifyConvergence, trackRound, shouldWebSearch } from './convergence.js';
 import { withLease } from './lease.js';
+import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
 import { runVerify } from './verifier.js';
 
 export interface VerifyDeps {
@@ -31,6 +32,7 @@ export async function verifyLoop(
   while (true) {
     const v = await runVerify(d.config.verifyCommand, cwd);
     if (!v.ok) return err('VERIFY_FAILED', v.error.message);
+    recordVerifyErrors(conv, v.value.errors);
     trackRound(conv, v.value, lastTokensDelta);
     const sp = await d.queue.updateProgress(taskId, { round: conv.rounds.length, convergence: conv }, token);
     if (!sp.ok) return sp;
@@ -56,6 +58,9 @@ export async function verifyLoop(
     ));
     if (!fix.ok) return err(fix.error.code, fix.error.message);
     lastTokensDelta = fix.value.tokensDelta;
+    recordSessionChanges(conv, fix.value.changedFiles);
+    const fp = await d.queue.updateProgress(taskId, { round: conv.rounds.length, convergence: conv }, token);
+    if (!fp.ok) return fp;
     const sv = await setStatus(d, taskId, 'verifying', token);
     if (!sv.ok) return sv;
   }

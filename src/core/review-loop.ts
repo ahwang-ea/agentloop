@@ -5,6 +5,7 @@ import type {
   TaskDefinition, ConvergenceState, TaskStatus, SessionOutput, ReviewFinding,
   ClaudeAdapter, ClaudeSession, CodexAdapter, GitAdapter, TaskQueueAdapter, AgentloopConfig,
 } from '../types/index.js';
+import { logTaskMetrics, recordReviewFindings, recordSessionChanges } from './metrics.js';
 import { runParallelReviews, formatFixPrompt, resolveConflicts } from './reviewer.js';
 import { verifyLoop, type VerifyDeps } from './verify-loop.js';
 import { withLease } from './lease.js';
@@ -40,6 +41,9 @@ async function singleReviewPass(
   if (!reviews.ok) return err(reviews.error.code, reviews.error.message);
   const findings = reviews.value.flatMap(r => r.findings);
   if (findings.length === 0) return ok({ count: 0, hashes: [] });
+  recordReviewFindings(conv, findings);
+  const progress = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
+  if (!progress.ok) return progress;
   const resolved = resolveConflicts(findings);
   if (!resolved.ok) return resolved as Result<never>;
   const sf = await setStatus(d, task.id, 'fixing', token);
@@ -49,6 +53,9 @@ async function singleReviewPass(
     () => d.queue.renewClaim(task.id, token),
   ));
   if (!fix.ok) return err(fix.error.code, fix.error.message);
+  recordSessionChanges(conv, fix.value.changedFiles);
+  const saved = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token);
+  if (!saved.ok) return saved;
   const vl = await verifyLoop(d, session, task.id, fix.value.tokensDelta, conv, t0, cwd, token);
   if (!vl.ok) return vl as Result<never>;
   return ok({ count: findings.length, hashes: [...new Set(findings.map(hashFinding))].sort() });
@@ -68,6 +75,7 @@ export async function reviewPhase(
       if (r.error.code === 'REVIEW_CONFLICT') {
         const mb = await d.queue.markBlocked(task.id, r.error.message, r.error.details ?? {}, token);
         if (!mb.ok) return mb;
+        const logged = await logTaskMetrics(d.config, d.queue, task, 'blocked'); if (!logged.ok) console.error(logged.error.message);
       }
       return r as Result<never>;
     }
@@ -77,6 +85,7 @@ export async function reviewPhase(
       const reason = `Review findings stopped converging after ${stallLimit + 1} passes`;
       const mb = await d.queue.markBlocked(task.id, reason, { findings: r.value.hashes }, token);
       if (!mb.ok) return mb;
+      const logged = await logTaskMetrics(d.config, d.queue, task, 'blocked'); if (!logged.ok) console.error(logged.error.message);
       return err('REVIEW_STUCK', reason, { findings: r.value.hashes });
     }
     prev = r.value.hashes;

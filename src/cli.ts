@@ -6,17 +6,19 @@ import { ok, err, type Result } from './shared/result.js';
 import { approveFeatureGate } from './core/approval.js';
 import { loadConfig } from './core/cli-config.js';
 import { scaffoldRepo } from './core/init.js';
+import { formatMetricsSummary, readMetricsSummary } from './core/metrics-report.js';
 import { runRescan } from './core/rescan.js';
 import { formatStatusSummary, readStatusSummary } from './core/status.js';
 import { runOrchestrator, type Deps } from './orchestrator.js';
 import { createDeps } from './core/deps.js';
 import { enqueueInteractiveTask } from './core/interactive-task.js';
-const USAGE = ['Usage: agentloop <init|start|status|rescan|approve> [options]', '  init', '  start [--interactive] [--dry-run] [--config path]', '  status [--config path]', '  rescan [--config path]', '  approve <task-id> [--config path]'].join('\n');
+const USAGE = ['Usage: agentloop <init|start|status|metrics|rescan|approve> [options]', '  init', '  start [--interactive] [--dry-run] [--config path]', '  status [--config path]', '  metrics [--config path]', '  rescan [--config path]', '  approve <task-id> [--config path]'].join('\n');
 
 type Command =
   | { name: 'init' }
   | { name: 'start'; interactive: boolean; dryRun: boolean; configPath?: string }
   | { name: 'status'; configPath?: string }
+  | { name: 'metrics'; configPath?: string }
   | { name: 'rescan'; configPath?: string }
   | { name: 'approve'; taskId: string; configPath?: string };
 
@@ -34,6 +36,9 @@ function parseCommand(argv: string[]): Result<Command> {
   }
   if (command === 'status') {
     const configPath = configPathOf(args); return configPath.ok ? ok({ name: 'status', configPath: configPath.value }) : configPath;
+  }
+  if (command === 'metrics') {
+    const configPath = configPathOf(args); return configPath.ok ? ok({ name: 'metrics', configPath: configPath.value }) : configPath;
   }
   if (command === 'rescan') {
     const configPath = configPathOf(args); return configPath.ok ? ok({ name: 'rescan', configPath: configPath.value }) : configPath;
@@ -79,6 +84,15 @@ async function handleStatus(configPath?: string): Promise<Result<void>> {
   return ok(undefined);
 }
 
+async function handleMetrics(configPath?: string): Promise<Result<void>> {
+  const config = await loadConfig(configPath);
+  if (!config.ok) return config;
+  const summary = await readMetricsSummary(config.value);
+  if (!summary.ok) return summary;
+  console.log(formatMetricsSummary(summary.value));
+  return ok(undefined);
+}
+
 async function handleRescan(configPath?: string): Promise<Result<void>> {
   const config = await loadConfig(configPath);
   if (!config.ok) return config;
@@ -101,6 +115,7 @@ async function runCli(argv: string[]): Promise<Result<void>> {
   if (!command.ok) return command;
   if (command.value.name === 'init') return handleInit();
   if (command.value.name === 'status') return handleStatus(command.value.configPath);
+  if (command.value.name === 'metrics') return handleMetrics(command.value.configPath);
   if (command.value.name === 'rescan') return handleRescan(command.value.configPath);
   if (command.value.name === 'approve') return handleApprove(command.value.taskId, command.value.configPath);
   return handleStart(command.value.interactive, command.value.dryRun, command.value.configPath);

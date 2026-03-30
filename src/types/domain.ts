@@ -56,6 +56,9 @@ export interface ConvergenceState {
   rounds: ConvergenceRound[];
   classification: 'converging' | 'stuck' | 'thrashing' | 'unknown';
   webSearchTriggered: boolean;
+  reviewFindings: number;
+  errorTypes: string[];
+  changedFiles: string[];
 }
 export interface ConvergenceConfig { maxWallClock: number; maxTokens: number; stuckThreshold: number; thrashOverlapRatio: number; }
 
@@ -78,6 +81,21 @@ export interface BehaviorCheckResult { hasChanges: boolean; changes: BehaviorCha
 export interface BranchState { name: string; createdFrom: string; worktreePath: string; }
 export type NotificationType = 'behavior-change' | 'escalation' | 'sweep-result' | 'promotion-ready' | 'intent-check';
 export interface Notification { type: NotificationType; taskId?: string; summary: string; details: string; timestamp: string; idempotencyKey?: string; }
+
+export type MetricsOutcome = 'merged' | 'stuck' | 'blocked' | 'needs-human';
+export interface TaskMetricsStats {
+  rounds: number;
+  timeSec: number;
+  reviewFindings: number;
+  errors: string[];
+  files: string[];
+  timestamp: string;
+}
+export interface MetricsRecord extends TaskMetricsStats {
+  task_id: string;
+  task: string;
+  outcome: MetricsOutcome;
+}
 
 export interface InventoryFile { path: string; lines: number; }
 export interface InventoryPackage { name: string; path: string; }
