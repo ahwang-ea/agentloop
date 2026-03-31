@@ -8,11 +8,11 @@ const unfinishedTypes = <T extends Pick<TaskState, 'status' | 'task'>>(tasks: T[
 export const featureBranchName = (feature: string) => `feature-${slugify(feature)}`;
 export const isTypesTask = (task: TaskDefinition) => task.scope.editableFiles.some(typeFile)
   || /\btype(s| definition)?\b/i.test(`${task.title} ${task.description}`);
+export const canFeatureTaskRun = <T extends Pick<TaskState, 'status' | 'task'>>(tasks: T[], task: TaskDefinition) =>
+  !task.feature || isTypesTask(task) || !unfinishedTypes(tasks, task.feature);
 
 export function pickQueuedTask<T extends Pick<TaskState, 'status' | 'task'>>(tasks: T[]): T | undefined {
-  for (const task of tasks.filter(item => item.status === 'queued')) {
-    if (!task.task.feature || isTypesTask(task.task) || !unfinishedTypes(tasks, task.task.feature)) return task;
-  }
+  for (const task of tasks.filter(item => item.status === 'queued')) if (canFeatureTaskRun(tasks, task.task)) return task;
   return undefined;
 }
 

@@ -22,39 +22,57 @@ const tools = (mode: ToolMode): string[] | { type: 'preset'; preset: 'claude_cod
 const agentic = (mode: ToolMode) => mode === 'write' || mode === 'research';
 const READ_ONLY_TURNS = 10;
 const WRITE_TURNS = 40;
-const SCAFFOLD_TIMEOUT_MS = 30_000;
+const WRITE_TIMEOUT_MS = 180_000;
+const SCAFFOLD_TIMEOUT_MS = 60_000;
 const REVIEW_TIMEOUT_MS = 60_000;
+const CHAT_TIMEOUT_MS = 180_000;
+const TRANSIENT_RETRY_MS = 1_000;
+const transient = (text: string) => /(?:repeated\s+529|\b529\b.*overloaded|api error:|rate limit|temporarily unavailable)/i.test(text);
+const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function runTurn(
   config: AgentloopConfig, cwd: string, prompt: string, resume: string | undefined, mode: ToolMode, timeoutMs?: number,
 ): Promise<Result<TurnResult>> {
-  let text = '', tokensDelta = 0, sessionId = resume ?? '', hookStop = false;
-  const changedFiles = new Set<string>(), abortController = new AbortController();
-  const timer = timeoutMs ? setTimeout(() => abortController.abort(), timeoutMs) : undefined;
-  try {
-    for await (const message of query({ prompt, options: { abortController, cwd, env: appEnv, maxTurns: agentic(mode) ? WRITE_TURNS : READ_ONLY_TURNS, model: config.claudeModel, permissionMode: agentic(mode) ? 'acceptEdits' : 'dontAsk', settingSources: agentic(mode) ? ['project'] : undefined, tools: tools(mode), resume } })) {
-      if (message.type === 'system' && message.subtype === 'files_persisted') message.files.forEach(file => changedFiles.add(file.filename));
-      if (message.type === 'system' && message.subtype === 'hook_response' && message.hook_event === 'Stop') hookStop = true;
-      if (message.type !== 'result') continue;
-      sessionId = message.session_id;
-      tokensDelta = tokenCount(message.usage);
-      if (message.subtype !== 'success') return err('SESSION_ERROR', message.errors.join('\n') || 'Claude query failed', { sessionId });
-      text = message.result;
-      return ok({ text, tokensDelta, changedFiles: [...changedFiles], stopReason: stopReason(message.stop_reason, hookStop), sessionId });
-    }
-  } catch (e) {
-    return abortController.signal.aborted && timeoutMs
-      ? err('BUDGET_EXCEEDED', `Claude ${mode} timed out after ${Math.round(timeoutMs / 1000)}s`)
-      : err('SESSION_ERROR', `Claude query failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-  } finally { if (timer) clearTimeout(timer); }
-  return err('EMPTY_RESPONSE', 'Claude query returned no result');
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    let retry = false, hookStop = false, sessionId = resume ?? '';
+    const changedFiles = new Set<string>(), abortController = new AbortController();
+    const timer = timeoutMs ? setTimeout(() => abortController.abort(), timeoutMs) : undefined;
+    try {
+      for await (const message of query({ prompt, options: { abortController, cwd, env: appEnv, maxTurns: agentic(mode) ? WRITE_TURNS : READ_ONLY_TURNS, model: config.claudeModel, permissionMode: agentic(mode) ? 'acceptEdits' : 'dontAsk', settingSources: agentic(mode) ? ['project'] : undefined, tools: tools(mode), resume } })) {
+        if (message.type === 'system' && message.subtype === 'files_persisted') message.files.forEach(file => changedFiles.add(file.filename));
+        if (message.type === 'system' && message.subtype === 'hook_response' && message.hook_event === 'Stop') hookStop = true;
+        if (message.type !== 'result') continue;
+        sessionId = message.session_id;
+        const tokensDelta = tokenCount(message.usage);
+        if (message.subtype !== 'success') {
+          const reason = message.errors.join('\n') || 'Claude query failed';
+          if (attempt < 4 && transient(reason)) { retry = true; break; }
+          return err('SESSION_ERROR', reason, { sessionId });
+        }
+        if (transient(message.result)) {
+          if (attempt < 4) { retry = true; break; }
+          return err('SESSION_ERROR', message.result, { sessionId });
+        }
+        return ok({ text: message.result, tokensDelta, changedFiles: [...changedFiles], stopReason: stopReason(message.stop_reason, hookStop), sessionId });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'unknown error';
+      if (abortController.signal.aborted && timeoutMs) return err('BUDGET_EXCEEDED', `Claude ${mode} timed out after ${Math.round(timeoutMs / 1000)}s`);
+      if (attempt < 4 && transient(message)) retry = true;
+      else return err('SESSION_ERROR', `Claude query failed: ${message}`);
+    } finally { if (timer) clearTimeout(timer); }
+    if (!retry) return err('EMPTY_RESPONSE', 'Claude query returned no result');
+    await pause(TRANSIENT_RETRY_MS * (attempt + 1));
+  }
+  return err('SESSION_ERROR', 'Claude query hit repeated transient API errors');
 }
 
 export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
   const sessions = new Map<string, StoredSession>();
   const runSessionTurn = async (session: ClaudeSession, prompt: string): Promise<Result<WriterOutput>> => {
     const stored = sessions.get(session.id); if (!stored) return err('SESSION_ERROR', `Unknown Claude session ${session.id}`);
-    const turn = await runTurn(config, stored.cwd, prompt, stored.resumeId, stored.mode); if (!turn.ok) return turn;
+    const timeout = stored.mode === 'write' || stored.mode === 'research' ? WRITE_TIMEOUT_MS : undefined;
+    const turn = await runTurn(config, stored.cwd, prompt, stored.resumeId, stored.mode, timeout); if (!turn.ok) return turn;
     stored.resumeId = turn.value.sessionId;
     return ok({ text: turn.value.text, changedFiles: turn.value.changedFiles, tokenEstimate: turn.value.tokensDelta });
   };
@@ -85,7 +103,7 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
       return turn.ok ? parseReviewOutput(turn.value.text, request.role, (Date.now() - started) / 1000) : turn;
     },
     async chat(message) {
-      const turn = await runTurn(config, config.repoPath, message, undefined, 'readonly');
+      const turn = await runTurn(config, config.repoPath, message, undefined, 'prompt', CHAT_TIMEOUT_MS);
       return turn.ok ? ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason }) : turn;
     },
     async scaffold(task) {

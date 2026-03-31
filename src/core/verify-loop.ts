@@ -11,6 +11,7 @@ import type {
   TaskDefinition,
   TaskQueueAdapter,
   TaskStatus,
+  VerifyResult,
 } from '../types/index.js';
 import { classifyConvergence, trackRound, shouldWebSearch } from './convergence.js';
 import { withLease } from './lease.js';
@@ -28,6 +29,45 @@ export interface VerifyDeps extends WriterDeps {
 }
 
 const setStatus = (d: VerifyDeps, id: string, s: TaskStatus, token: string) => d.queue.updateStatus(id, s, token);
+const shouldLogVerify = () => process.env.AGENTLOOP_LOG_VERIFY === '1';
+const logVerify = (task: TaskDefinition, round: number, files: string[], pass: boolean, output: string) => {
+  if (!shouldLogVerify()) return;
+  const banner = `[verify] ${task.id} round ${round} ${pass ? 'pass' : 'fail'} files=${files.join(', ') || '(none)'}`;
+  console.error(banner);
+  if (pass) return;
+  console.error(truncateVerifyOutput(output));
+};
+const missingPackages = (verify: VerifyResult) => [...new Set(verify.errors.flatMap(error => {
+  const match = error.message.match(/Cannot find module '([^']+)'/);
+  return match && !match[1].startsWith('.') && !match[1].startsWith('/') ? [match[1]] : [];
+}))];
+const rowTypingErrors = (verify: VerifyResult) => verify.errors.some(error => /Argument of type '(?:unknown|\{\})' is not assignable to parameter of type|Property '.+' does not exist on type '\{\}'/.test(error.message));
+const resultValueErrors = (verify: VerifyResult) => verify.errors.some(error => /Property 'value' does not exist on type 'Result/.test(error.message));
+const verifyFixPrompt = (task: TaskDefinition, verify: VerifyResult) => verify.errors.length === 0 ? truncateVerifyOutput(verify.output) : [
+  'Fix these verification errors:',
+  ...verify.errors.map(error => `- ${(error.file ?? error.source) + (error.line ? `:${error.line}` : '')}: ${error.message}`),
+  ...(missingPackages(verify).length === 0 || task.scope.editableFiles.includes('package.json') ? [] : [
+    '',
+    `Do not add undeclared packages like ${missingPackages(verify).join(', ')}. Remove or replace those imports using existing repo dependencies, built-in Node APIs, or local code. Do not edit package.json for this task.`,
+  ]),
+  ...(rowTypingErrors(verify) ? [
+    '',
+    'Reuse existing row types or mapper helpers from src/db/*.ts before accessing row fields. Do not treat rows as `{}` or `unknown`, and avoid hand-written placeholder objects.',
+  ] : []),
+  ...(resultValueErrors(verify) ? [
+    '',
+    'When handling Result<T>, branch on `.ok` before reading `.value`. In tests, assert success first instead of assuming `.value` always exists.',
+  ] : []),
+  ...(verify.errors.some(error => error.source === 'test') && task.scope.editableFiles.some(file => file.includes('test')) ? [
+    '',
+    'Fix implementation first. If a task-local test assertion conflicts with actual platform behavior or the task acceptance criteria, correct the test instead of forcing impossible behavior.',
+  ] : []),
+  '',
+  'Focus on the cited files first, then rerun verification.',
+  '',
+  'Raw verify output:',
+  truncateVerifyOutput(verify.output),
+].join('\n');
 
 export async function verifyLoop(
   d: VerifyDeps, session: ClaudeSession | undefined, task: TaskDefinition,
@@ -38,6 +78,7 @@ export async function verifyLoop(
   while (true) {
     const v = await progressiveVerify(d.config, files, cwd, false, task.type);
     if (!v.ok) return err(v.error.code, v.error.message);
+    logVerify(task, conv.rounds.length + 1, files, v.value.pass, v.value.output);
     recordVerifyErrors(conv, v.value.errors);
     trackRound(conv, v.value, lastTokenEstimate);
     const sp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!sp.ok) return sp;
@@ -51,7 +92,7 @@ export async function verifyLoop(
     const sf = await setStatus(d, task.id, 'fixing', token); if (!sf.ok) return sf;
     const prompt = shouldWebSearch(conv) && !conv.webSearchTriggered
       ? (conv.webSearchTriggered = true, `Search for these errors, then fix:\n${v.value.errors.map(e => e.message).join('\n')}`)
-      : truncateVerifyOutput(v.value.output);
+      : verifyFixPrompt(task, v.value);
     const fix = await withLease(() => runWriterFix(d, session, task, prompt, cwd), () => d.queue.renewClaim(task.id, token));
     if (!fix.ok) return err(fix.error.code, fix.error.message);
     lastTokenEstimate = fix.value.tokenEstimate;

@@ -28,4 +28,5 @@ Document the key folders and entry points for this repo.
 
 ## Do NOT
 - Edit secrets, production config, or deployment files unless the task requires it.
+- Add or import new npm dependencies unless the task explicitly requires it.
 - Make unrelated fixes while working on the current task.

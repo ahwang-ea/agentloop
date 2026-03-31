@@ -65,7 +65,7 @@ export async function finalize(
     const diff = await d.git.getDiff(`${fin.mergeCommit}~1`, fin.mergeCommit);
     if (!diff.ok) return diff;
     const behavior = detectBehaviorChanges(diff.value);
-    if (behavior.readmeUpdateNeeded) {
+    if (d.config.readmeTasksEnabled !== false && behavior.readmeUpdateNeeded) {
       const et = await d.queue.ensureTask(`readme:${task.id}:${fin.mergeCommit}`, {
         title: `Update README for ${task.title}`, description: 'Behavior changes detected.',
         scope: { editableFiles: ['README.md'], readOnlyContext: [], forbiddenFiles: [] },

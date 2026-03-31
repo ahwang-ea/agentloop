@@ -9,9 +9,12 @@ import { writeInventory } from './scanner.js';
 import { runSmartInit, shouldRunSmartInit } from './smart-init.js';
 
 interface Summary { created: string[]; skipped: string[]; }
+interface ScaffoldOptions { smartInit?: boolean; }
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const asset = (...parts: string[]) => join(root, '..', ...parts);
 const exists = async (path: string) => access(path, constants.F_OK).then(() => true).catch(() => false);
+const npmLocks = ['package-lock.json', 'npm-shrinkwrap.json'];
+const altLocks = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'];
 
 async function readTemplate(path: string, projectName: string): Promise<Result<string>> {
   try {
@@ -21,7 +24,6 @@ async function readTemplate(path: string, projectName: string): Promise<Result<s
     return err('TRANSPORT_ERROR', `Cannot read template ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
   }
 }
-
 async function writeOnce(path: string, content: string, summary: Summary, mode?: number): Promise<Result<void>> {
   if (await exists(path)) { summary.skipped.push(path); return ok(undefined); }
   try {
@@ -34,7 +36,6 @@ async function writeOnce(path: string, content: string, summary: Summary, mode?:
     return err('TRANSPORT_ERROR', `Cannot write ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
   }
 }
-
 async function copyOnce(from: string, to: string, summary: Summary, mode?: number): Promise<Result<void>> {
   if (await exists(to)) { summary.skipped.push(to); return ok(undefined); }
   try {
@@ -47,13 +48,24 @@ async function copyOnce(from: string, to: string, summary: Summary, mode?: numbe
     return err('TRANSPORT_ERROR', `Cannot copy ${from} to ${to}: ${e instanceof Error ? e.message : 'unknown error'}`);
   }
 }
+async function npmRepo(repoPath: string) {
+  if (!await exists(join(repoPath, 'package.json'))) return false;
+  const npmManaged = (await Promise.all(npmLocks.map(name => exists(join(repoPath, name))))).some(Boolean);
+  const altManaged = (await Promise.all(altLocks.map(name => exists(join(repoPath, name))))).some(Boolean);
+  return npmManaged || !altManaged;
+}
 
-export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
+export async function scaffoldRepo(repoPath: string, options: ScaffoldOptions = {}): Promise<Result<Summary>> {
   const summary: Summary = { created: [], skipped: [] };
   const projectName = basename(repoPath);
   const agents = await readTemplate(asset('templates', 'AGENTS.md'), projectName); if (!agents.ok) return agents;
   const arch = await readTemplate(asset('templates', 'ARCHITECTURE.md'), projectName); if (!arch.ok) return arch;
   const verify = await readTemplate(asset('templates', 'verify.sh'), projectName); if (!verify.ok) return verify;
+  const security = await npmRepo(repoPath) ? [
+    copyOnce(asset('templates', '.npmrc'), join(repoPath, '.npmrc'), summary),
+    copyOnce(asset('templates', 'socket.yml'), join(repoPath, 'socket.yml'), summary),
+    copyOnce(asset('templates', '.github', 'workflows', 'socket-security.yml'), join(repoPath, '.github', 'workflows', 'socket-security.yml'), summary),
+  ] : [];
   const files: Array<Promise<Result<void>>> = [
     writeOnce(join(repoPath, 'AGENTS.md'), agents.value, summary),
     writeOnce(join(repoPath, 'ARCHITECTURE.md'), arch.value, summary),
@@ -73,10 +85,11 @@ export async function scaffoldRepo(repoPath: string): Promise<Result<Summary>> {
     copyOnce(asset('hooks', 'on-stop.py'), join(repoPath, '.agentloop', 'hooks', 'on-stop.py'), summary, 0o755),
     writeOnce(join(repoPath, '.agentloop', 'current-scope.json'), JSON.stringify({ editableFiles: ['**/*'], readOnlyContext: [], forbiddenFiles: [] }, null, 2), summary),
     writeOnce(join(repoPath, '.agentloop', 'session-status.json'), JSON.stringify({ status: 'idle' }, null, 2), summary),
+    ...security,
   ];
   for (const result of await Promise.all(files)) if (!result.ok) return result;
   const inventory = await writeInventory(repoPath); if (!inventory.ok) return inventory;
-  if (shouldRunSmartInit(inventory.value)) {
+  if ((options.smartInit ?? true) && shouldRunSmartInit(inventory.value)) {
     const smart = await runSmartInit(repoPath);
     if (!smart.ok) return smart;
   }

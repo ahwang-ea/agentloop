@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { ok, err, type Result } from '../shared/result.js';
 import { clearStaleLock } from './stale-lock.js';
 import type { AgentloopConfig, ClaimedActionableTask, TaskDefinition, TaskQueueAdapter, TaskState } from '../types/index.js';
-import { pickQueuedTask } from './feature.js';
+import { canFeatureTaskRun } from './feature.js';
 import { normalizeTaskForRepo } from './monorepo.js';
 
 type Lease = { token: string; expiresAt: string };
@@ -21,6 +21,8 @@ const normalize = (task: TaskRecord): TaskRecord => ({ ...task, task: withType(t
 const strip = ({ claim: _c, dedupeKey: _d, ...task }: TaskRecord): TaskState => ({ ...task, task: withType(task.task) });
 const countByPrefix = (tasks: TaskRecord[], prefix: string) => tasks.filter(task => task.dedupeKey?.startsWith(prefix) && task.status !== 'done' && task.status !== 'stuck').length;
 const claimedIntegrate = (tasks: TaskRecord[]) => tasks.some(task => task.task.type === 'integrate' && active.has(task.status) && task.claim && !expired(task.claim));
+const depsDone = (tasks: TaskRecord[], task: TaskDefinition) => (task.dependsOn ?? []).every(id => tasks.some(item => item.task.id === id && item.status === 'done'));
+const nextQueued = (tasks: TaskRecord[]) => tasks.find(item => item.status === 'queued' && depsDone(tasks, item.task) && canFeatureTaskRun(tasks, item.task));
 
 async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise<Result<T>> {
   const lock = `${path}.lock`;
@@ -81,7 +83,7 @@ export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
           const saved = await save(path, records); if (!saved.ok) return saved;
           return ok({ state: { status: resumable.status as 'writing' | 'merging', task: resumable.task, branch: resumable.branch, round: resumable.round, convergence: resumable.convergence }, claimToken: nextLease.token });
         }
-        const queued = pickQueuedTask(records);
+        const queued = nextQueued(records);
         if (!queued || (queued.task.type === 'integrate' && activeCount > 0)) return ok(null);
         queued.status = 'writing'; queued.claim = nextLease; queued.startedAt = new Date().toISOString();
         const saved = await save(path, records); if (!saved.ok) return saved;
@@ -95,6 +97,13 @@ export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
     async updateFinalization(taskId, finalization, claimToken) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = withClaim(tasks.value, taskId, claimToken); if (!task.ok) return task; task.value.finalization = finalization; task.value.claim = { token: claimToken, expiresAt: new Date(Date.now() + LEASE_MS).toISOString() }; return save(path, tasks.value); }); },
     async markDone(taskId, claimToken) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = withClaim(tasks.value, taskId, claimToken); if (!task.ok) return task; Object.assign(task.value, { status: 'done', completedAt: new Date().toISOString(), claim: undefined }); return save(path, tasks.value); }); },
     async markStuck(taskId, reason, claimToken) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = withClaim(tasks.value, taskId, claimToken); if (!task.ok) return task; Object.assign(task.value, { status: 'stuck', stuckReason: reason, completedAt: new Date().toISOString(), claim: undefined }); return save(path, tasks.value); }); },
+    async markQueuedStuck(taskId, reason) { return withLock(path, async () => {
+      const tasks = await load(path); if (!tasks.ok) return tasks;
+      const task = tasks.value.find(t => t.task.id === taskId); if (!task) return err('QUEUE_EMPTY', `Task not found: ${taskId}`);
+      if (task.status !== 'queued') return err('CONFIG_ERROR', `Task ${taskId} is not queued`);
+      Object.assign(task, { status: 'stuck', stuckReason: reason, completedAt: new Date().toISOString(), claim: undefined });
+      return save(path, tasks.value);
+    }); },
     async markBlocked(taskId, reason, details, claimToken) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = withClaim(tasks.value, taskId, claimToken); if (!task.ok) return task; Object.assign(task.value, { status: 'blocked', completedAt: new Date().toISOString(), blocked: { reason, details, blockedAt: new Date().toISOString() }, claim: undefined }); return save(path, tasks.value); }); },
     async requeueBlocked(taskId) { return withLock(path, async () => { const tasks = await load(path); if (!tasks.ok) return tasks; const task = tasks.value.find(t => t.task.id === taskId); if (!task) return err('QUEUE_EMPTY', `Task not found: ${taskId}`); Object.assign(task, { status: 'queued', blocked: undefined, round: 0, convergence: undefined, completedAt: undefined, claim: undefined }); return save(path, tasks.value); }); },
     async approveBlocked(taskId) { return withLock(path, async () => {

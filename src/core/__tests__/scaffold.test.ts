@@ -10,7 +10,7 @@ const task = {
   title: 'Add parser',
   description: 'Implement a parser.',
   type: 'implement' as const,
-  scope: { editableFiles: ['src/**/*'], readOnlyContext: [], forbiddenFiles: [] },
+  scope: { editableFiles: ['src/types.ts'], readOnlyContext: [], forbiddenFiles: [] },
   acceptanceCriteria: ['Parser handles empty input.'],
   priority: 'medium' as const,
   createdAt: new Date().toISOString(),
@@ -52,4 +52,18 @@ test('asks Claude for scaffold output and writes it', async () => {
   }, task, repoPath);
   expect(applied.ok).toBe(true);
   expect(await readFile(join(repoPath, 'src', 'types.ts'), 'utf-8')).toContain('Id');
+});
+
+
+test('skips out-of-scope scaffold files', async () => {
+  const repoPath = await repo();
+  const applied = await scaffoldTask({
+    scaffold: async () => ok({ files: [
+      { type: 'types', path: 'src/types.ts', content: "export type Id = string;\n" },
+      { type: 'test', path: 'src/__tests__/types.test.ts', content: "test('x', () => {});\n" },
+    ] }),
+  }, task, repoPath);
+  expect(applied.ok).toBe(true);
+  if (!applied.ok) return;
+  expect(applied.value).toEqual(['src/types.ts']);
 });

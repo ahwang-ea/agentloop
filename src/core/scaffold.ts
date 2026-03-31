@@ -3,10 +3,15 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
 import type { ClaudeAdapter, ScaffoldFile, ScaffoldOutput, TaskDefinition } from '../types/index.js';
 import { extractJson } from './review-output.js';
+import { checkScope } from './scope.js';
 
 const CONTENT_TYPES = new Set(['types', 'stub', 'test']);
 const asString = (value: unknown) => typeof value === 'string' ? value : '';
 const asPath = (value: unknown) => asString(value).trim();
+const inScope = (path: string, task: TaskDefinition) => {
+  const scoped = checkScope(path, task.scope);
+  return scoped.ok && scoped.value.length === 0;
+};
 
 export const buildScaffoldPrompt = (task: TaskDefinition) => [
   'You are frontloading a task scaffold before implementation begins.',
@@ -36,17 +41,14 @@ export function parseScaffoldOutput(rawOutput: string): Result<ScaffoldOutput> {
   const json = extractJson(rawOutput);
   if (!json) return err('SESSION_ERROR', 'Malformed scaffold output from Claude');
   let parsed: unknown;
-  try { parsed = JSON.parse(json); }
-  catch (e) { return err('SESSION_ERROR', `Cannot parse scaffold JSON: ${e instanceof Error ? e.message : 'unknown error'}`); }
-  const items = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' && Array.isArray((parsed as { files?: unknown }).files)
-    ? (parsed as { files: unknown[] }).files : null;
+  try { parsed = JSON.parse(json); } catch (e) { return err('SESSION_ERROR', `Cannot parse scaffold JSON: ${e instanceof Error ? e.message : 'unknown error'}`); }
+  const items = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' && Array.isArray((parsed as { files?: unknown }).files) ? (parsed as { files: unknown[] }).files : null;
   if (!items) return err('SESSION_ERROR', 'Scaffold output must be an array or { files: [] }');
   const files: ScaffoldFile[] = [];
   for (const item of items) {
     if (!item || typeof item !== 'object') return err('SESSION_ERROR', 'Invalid scaffold file');
     const file = item as Record<string, unknown>;
-    const type = asPath(file.type) as ScaffoldFile['type'];
-    const path = asPath(file.path);
+    const type = asPath(file.type) as ScaffoldFile['type'], path = asPath(file.path);
     if (!path) return err('SESSION_ERROR', 'Scaffold file path is required');
     if (type === 'golden-copy') {
       const referencePath = asPath(file.referencePath);
@@ -63,11 +65,9 @@ export function parseScaffoldOutput(rawOutput: string): Result<ScaffoldOutput> {
 }
 
 function safePath(root: string, path: string): Result<string> {
-  const full = resolve(root, path);
-  const rel = relative(root, full);
+  const full = resolve(root, path), rel = relative(root, full);
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? ok(full) : err('SESSION_ERROR', `Scaffold path escapes worktree: ${path}`);
 }
-
 async function applyFile(root: string, file: ScaffoldFile): Promise<Result<string>> {
   const dest = safePath(root, file.path); if (!dest.ok) return dest;
   try {
@@ -82,7 +82,6 @@ async function applyFile(root: string, file: ScaffoldFile): Promise<Result<strin
     return err('TRANSPORT_ERROR', `Cannot write scaffold file ${file.path}: ${message}`);
   }
 }
-
 export async function applyScaffold(cwd: string, scaffold: ScaffoldOutput): Promise<Result<string[]>> {
   const written: string[] = [];
   for (const file of scaffold.files) {
@@ -96,5 +95,11 @@ export async function scaffoldTask(
   claude: Pick<ClaudeAdapter, 'scaffold'>, task: TaskDefinition, cwd: string,
 ): Promise<Result<string[]>> {
   const scaffold = await claude.scaffold(task);
-  return scaffold.ok ? applyScaffold(cwd, scaffold.value) : scaffold;
+  if (!scaffold.ok) return scaffold;
+  const filtered = scaffold.value.files.filter(file => {
+    if (inScope(file.path, task)) return true;
+    console.warn(`Scaffold skipped out-of-scope file: ${file.path}`);
+    return false;
+  });
+  return applyScaffold(cwd, { files: filtered });
 }

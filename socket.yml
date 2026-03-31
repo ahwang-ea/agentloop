@@ -1,0 +1,16 @@
+version: 2
+
+projectIgnorePaths:
+  - "/*"
+  - "!/package.json"
+  - "!/package-lock.json"
+
+triggerPaths:
+  - "/package.json"
+  - "/package-lock.json"
+
+githubApp:
+  enabled: true
+  pullRequestAlertsEnabled: true
+  dependencyOverviewEnabled: true
+  projectReportsEnabled: true
