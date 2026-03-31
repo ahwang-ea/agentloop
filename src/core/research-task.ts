@@ -10,7 +10,7 @@ interface ResearchDeps {
   git: GitAdapter;
   notifier: NotifierAdapter;
   queue: TaskQueueAdapter;
-  config: Pick<AgentloopConfig, 'baseBranch' | 'repoPath' | 'agentsMdPath'>;
+  config: Pick<AgentloopConfig, 'baseBranch' | 'repoPath' | 'agentsMdPath' | 'autoApproveResearch'>;
 }
 const unique = (items: string[]) => [...new Set(items)];
 const approvalReason = 'awaiting human approval of research output';
@@ -50,5 +50,7 @@ export async function runResearchTask(
     idempotencyKey: `research:${task.id}`,
   });
   if (!notice.ok) console.error(notice.error.message);
-  return ok(undefined);
+  if (!d.config.autoApproveResearch) return ok(undefined);
+  const approved = await d.queue.approveBlocked(task.id);
+  return approved.ok ? ok(undefined) : approved;
 }

@@ -38,19 +38,22 @@ export async function prepareFeatureFinalization(
   const base = await d.git.checkoutBase(d.config.baseBranch); if (!base.ok) return base;
   const before = await scanRepo(base.value); if (!before.ok) return before;
   const diff = await d.git.getDiff(d.config.baseBranch, fin.featureBranch ?? fin.mergeInto); if (!diff.ok) return diff;
-  const reviews = await runSequentialReviews(d, gateTask(task), diff.value); if (!reviews.ok) return reviews;
-  const resolved = resolveConflicts(reviews.value.flatMap(review => review.findings));
-  if (!resolved.ok) {
-    const blocked = await d.queue.markBlocked(task.id, resolved.error.message, resolved.error.details ?? {}, token);
-    return blocked.ok ? ok('done') : blocked;
-  }
-  if (resolved.value.length > 0) {
-    const blocked = await d.queue.markBlocked(task.id, `Feature gate findings for ${feature}`, { findings: formatFixPrompt(resolved.value) }, token);
-    return blocked.ok ? ok('done') : blocked;
+  if (!d.config.autoApproveFeatures) {
+    const reviews = await runSequentialReviews(d, gateTask(task), diff.value); if (!reviews.ok) return reviews;
+    const resolved = resolveConflicts(reviews.value.flatMap(review => review.findings));
+    if (!resolved.ok) {
+      const blocked = await d.queue.markBlocked(task.id, resolved.error.message, resolved.error.details ?? {}, token);
+      return blocked.ok ? ok('done') : blocked;
+    }
+    if (resolved.value.length > 0) {
+      const blocked = await d.queue.markBlocked(task.id, `Feature gate findings for ${feature}`, { findings: formatFixPrompt(resolved.value) }, token);
+      return blocked.ok ? ok('done') : blocked;
+    }
   }
   const after = await scanRepo(worktreePathForBranch(d.config, fin.featureBranch ?? fin.mergeInto)); if (!after.ok) return after;
   const delta = diffInventories(before.value, after.value), updateDocs = needsArchitectureUpdate(delta) && !docsChanged(diff.value);
   const baseline = await ensureIntentBaseline(d.config.repoPath, before.value); if (!baseline.ok) return baseline;
+  if (d.config.autoApproveFeatures) fin.approved = true;
   if (!fin.approved) {
     if (!fin.approvalRequested) {
       const sent = await d.notifier.send({

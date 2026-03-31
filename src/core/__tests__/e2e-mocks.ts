@@ -95,7 +95,8 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
           return wrap('write greet', async () => { await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8'); return { text: 'wrote greet', changedFiles: ['src/greet.ts'], tokenEstimate: 1 }; });
         },
         fix: async (prompt, cwd) => {
-          const cleanup = prompt === buildCleanupPrompt({ scope: task(mode).scope } as never), logged = await mark(repoPath, cleanup ? 'cleanup' : 'fix'); if (!logged.ok) return logged;
+          const cleanupPrompt = buildCleanupPrompt({ scope: task(mode).scope } as never);
+          const cleanup = prompt.includes(cleanupPrompt), logged = await mark(repoPath, cleanup ? 'cleanup' : 'fix'); if (!logged.ok) return logged;
           return wrap('fix greet', async () => {
             if (cleanup) await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8');
             return { text: cleanup ? 'cleanup' : 'retry', changedFiles: ['src/greet.ts'], tokenEstimate: 1 };
@@ -105,7 +106,7 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
       git: {
         createBranch: async (name, from) => { const path = await initWorktree(cfg, repoPath, name, mode); if (!path.ok) return path; paths.set(name, path.value); return ok({ name, createdFrom: from ?? 'main', worktreePath: path.value }); },
         checkoutBranch: async () => ok(undefined), checkoutBase: async () => ok(repoPath), commit: async () => ok('commit-1'), commitBase: async () => ok('base-1'),
-        getDiff: diff, prepareMerge: async () => ok(undefined), abortMerge: async () => ok(undefined), abandonBranch: async () => ok(undefined), rebaseAll: async () => ok(undefined), revertFiles: async () => ok(undefined), currentBranch: async () => ok('main'),
+        getDiff: diff, prepareMerge: async () => ok(undefined), abortMerge: async () => ok(undefined), abandonBranch: async () => ok(undefined), rebaseAll: async () => ok(undefined), revertFiles: async () => ok(undefined), trackedFiles: async (paths: string[]) => ok(paths), currentBranch: async () => ok('main'),
         merge: async () => { const logged = await mark(repoPath, 'merge'); return logged.ok ? ok('merge-1') : logged; },
       },
     };

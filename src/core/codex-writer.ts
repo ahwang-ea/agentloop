@@ -12,6 +12,10 @@ const text = (e: unknown) => {
   const x = e as { stdout?: string; stderr?: string; message?: string };
   return `${x.stdout ?? ''}${x.stderr ?? ''}`.trim() || x.message || 'Codex CLI failed';
 };
+const codexTimeoutMs = () => {
+  const value = Number(process.env.AGENTLOOP_CODEX_TIMEOUT_MS ?? 8 * 60_000);
+  return Number.isFinite(value) && value > 0 ? value : 8 * 60_000;
+};
 async function changedFiles(cwd: string): Promise<Result<string[]>> {
   try {
     const [tracked, untracked] = await Promise.all([
@@ -38,7 +42,7 @@ export function createCodexWriterAdapter(model: string): CodexWriterAdapter {
     const dir = await mkdtemp(join(tmpdir(), 'agentloop-codex-'));
     const out = join(dir, 'last-message.txt');
     try {
-      await exec('codex', ['exec', '--full-auto', '--color', 'never', '-m', model, '-C', cwd, '-o', out, prompt], { cwd, timeout: 20 * 60_000, maxBuffer: 10 * 1024 * 1024 });
+      await exec('codex', ['exec', '--full-auto', '--color', 'never', '-m', model, '-C', cwd, '-o', out, prompt], { cwd, timeout: codexTimeoutMs(), maxBuffer: 10 * 1024 * 1024 });
       const files = await changedFiles(cwd); if (!files.ok) return files;
       return ok({ text: (await readOutput(out)).trim(), changedFiles: files.value, tokenEstimate: 0 });
     } catch (e) {

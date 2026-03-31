@@ -2,6 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logInferredTaskMetrics, logMetrics, metricsFromTaskState, recordReviewFindings, recordSessionChanges, recordVerifyErrors } from '../metrics.js';
+import { parseMetrics } from '../metrics-report.js';
 import type { ConvergenceState, ReviewFinding, TaskDefinition, TaskState, VerifyError } from '../../types/index.js';
 
 const repoPath = () => mkdtemp(join(tmpdir(), 'agentloop-metrics-'));
@@ -46,9 +47,12 @@ test('uses needs-human outcome for blocked debug tasks', async () => {
 });
 
 test('dedupes metrics summaries by latest timestamp', async () => {
-  const repo = await repoPath();
-  await logMetrics({ repoPath: repo }, task('same', 'Checkout flow'), 'blocked', { rounds: 3, timeSec: 300, reviewFindings: 2, errors: ['review_conflict'], files: ['src/checkout.ts'], timestamp: '2026-03-18T12:00:00.000Z' });
-  await logMetrics({ repoPath: repo }, task('same', 'Checkout flow'), 'merged', { rounds: 4, timeSec: 360, reviewFindings: 2, errors: ['review_conflict'], files: ['src/checkout.ts'], timestamp: '2026-03-18T12:10:00.000Z' });
-  const content = await readFile(join(repo, '.agentloop', 'metrics.jsonl'), 'utf-8');
-  expect(content.trim().split('\n')).toHaveLength(2);
+  const parsed = parseMetrics([
+    JSON.stringify({ task_id: 'same', task: 'Checkout flow', rounds: 4, time_sec: 360, review_findings: 2, outcome: 'merged', errors: ['review_conflict'], files: ['src/checkout.ts'], timestamp: '2026-03-18T12:10:00.000Z' }),
+    JSON.stringify({ task_id: 'same', task: 'Checkout flow', rounds: 3, time_sec: 300, review_findings: 2, outcome: 'blocked', errors: ['review_conflict'], files: ['src/checkout.ts'], timestamp: '2026-03-18T12:00:00.000Z' }),
+  ].join('\n'), 'metrics.jsonl');
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  expect(parsed.value).toHaveLength(1);
+  expect(parsed.value[0]).toMatchObject({ outcome: 'merged', timeSec: 360, timestamp: '2026-03-18T12:10:00.000Z' });
 });

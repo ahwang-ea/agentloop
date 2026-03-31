@@ -6,3 +6,5 @@ dist/
 *.map
 !jest.config.js
 .env.e2e
+benchmarks/results/
+.DS_Store

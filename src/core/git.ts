@@ -1,8 +1,8 @@
 // core/git.ts — Git CLI adapter implementation.
 import { execFile } from 'node:child_process';
-import { access, mkdir } from 'node:fs/promises';
+import { access, mkdir, symlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { dirname, isAbsolute, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, BranchState, GitAdapter } from '../types/index.js';
@@ -69,6 +69,9 @@ export function createGitAdapter(config: AgentloopConfig): GitAdapter {
   const ensureBaseWorktree = async (base: string): Promise<Result<string>> => {
     const branch = await current(); if (!branch.ok) return branch;
     if (branch.value === base) return ok(config.repoPath);
+    const worktrees = await listWorktrees(); if (!worktrees.ok) return worktrees;
+    const existing = worktrees.value.find(item => item.branch === base);
+    if (existing) return ok(existing.path);
     const path = mergePath(base);
     if (await exists(path)) return ok(path);
     await mkdir(dirname(path), { recursive: true });
@@ -107,6 +110,11 @@ export function createGitAdapter(config: AgentloopConfig): GitAdapter {
       await mkdir(dirname(path), { recursive: true });
       const r = await runRoot('createBranch', ['worktree', 'add', '-b', branch, path, createdFrom]);
       if (!r.ok && /already exists/i.test(r.error.message)) return ok<BranchState>({ name: branch, createdFrom, worktreePath: path });
+      if (r.ok) {
+        const nm = join(config.repoPath, 'node_modules');
+        const target = join(path, 'node_modules');
+        try { await access(nm, constants.F_OK); await symlink(nm, target, 'junction'); } catch { /* no node_modules to link */ }
+      }
       return r.ok ? ok<BranchState>({ name: branch, createdFrom, worktreePath: path }) : r;
     },
     async checkoutBranch(name) { const r = await ensureWorktree(name); return r.ok ? ok(undefined) : r; },
@@ -143,6 +151,11 @@ export function createGitAdapter(config: AgentloopConfig): GitAdapter {
       const untracked = await listFiles(cwd, ['ls-files', '--others', '--exclude-standard', '--', ...unique]); if (!untracked.ok) return untracked;
       if (untracked.value.length > 0) { const cl = await run(cwd, 'revertUntracked', ['clean', '-f', '--', ...untracked.value]); if (!cl.ok) return cl; }
       return ok(undefined);
+    },
+    async trackedFiles(paths, cwd) {
+      const unique = [...new Set(paths.filter(Boolean))];
+      if (unique.length === 0) return ok([]);
+      return listFiles(cwd, ['ls-files', '--', ...unique]);
     },
     currentBranch: current,
   };

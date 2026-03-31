@@ -3,6 +3,7 @@ import type { AgentloopConfig, ClaimedActionableTask, ClaudeAdapter, CodexAdapte
 import { ok, err, type Result } from './shared/result.js';
 import { verifyCodexCli } from './core/codex-writer.js';
 import { finalize } from './core/finalizer.js';
+import { findDependencyFailures } from './core/dependency-deadlock.js';
 import { featureBranchName } from './core/feature.js';
 import { refreshLearnings } from './core/learnings.js';
 import { logTaskMetrics } from './core/metrics.js';
@@ -19,6 +20,7 @@ interface WorkerState { warm: WarmSessionState; }
 const MAX_FINALIZE_RETRIES = 3;
 const pending = new Set(['queued', 'writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging', 'finalizing']);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const expired = (deadlineAt?: number) => deadlineAt != null && Date.now() >= deadlineAt;
 const learn = async (d: Pick<Deps, 'config' | 'claude' | 'notifier'>) => { const r = await refreshLearnings(d.config, d.claude, d.notifier); if (!r.ok) console.error(r.error.message); };
 
 async function notify(d: Deps, taskId: string | undefined, summary: string, details: string,
@@ -49,17 +51,29 @@ async function claim(d: Deps): Promise<Result<ClaimedActionableTask | null>> {
   }
 }
 async function runSweep(d: Deps, shared: SharedState): Promise<Result<void>> {
+  if (d.config.sweepInterval <= 0) return ok(undefined);
   if (!shared.sweep) shared.sweep = (async () => { const result = await architectSweep(d); shared.sweep = undefined; return result; })();
   return shared.sweep;
 }
 async function waitForWork(d: Deps, shared: SharedState): Promise<Result<'retry' | 'stop'>> {
   const tasks = await d.queue.list(); if (!tasks.ok) return tasks;
-  if (tasks.value.some(task => pending.has(task.status))) { await sleep(250); return ok('retry'); }
+  const failures = findDependencyFailures(tasks.value);
+  for (const failure of failures) {
+    const task = tasks.value.find(item => item.task.id === failure.taskId)?.task; if (!task) continue;
+    const stuck = await d.queue.markQueuedStuck(task.id, failure.reason);
+    if (!stuck.ok && !['CONFIG_ERROR', 'QUEUE_EMPTY'].includes(stuck.error.code)) return stuck;
+    if (!stuck.ok) continue;
+    const logged = await logTaskMetrics(d.config, d.queue, task, 'stuck'); if (!logged.ok) console.error(logged.error.message); else await learn(d);
+    const notice = await notify(d, task.id, `Stuck: ${task.title}`, failure.reason); if (!notice.ok) console.error(notice.error.message);
+  }
+  const current = failures.length === 0 ? tasks : await d.queue.list(); if (!current.ok) return current;
+  if (current.value.some(task => pending.has(task.status))) { await sleep(250); return ok('retry'); }
   const swept = await runSweep(d, shared); if (!swept.ok) return swept;
   const refreshed = await d.queue.list(); if (!refreshed.ok) return refreshed;
   return ok(refreshed.value.some(task => pending.has(task.status)) ? 'retry' : 'stop');
 }
 async function maybeSweep(d: Deps, shared: SharedState): Promise<Result<void>> {
+  if (d.config.sweepInterval <= 0) return ok(undefined);
   if (++shared.sweepCounter < d.config.sweepInterval) return ok(undefined);
   shared.sweepCounter = 0; return runSweep(d, shared);
 }
@@ -101,9 +115,10 @@ async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worker: Work
   }
   return escalate(d, state.task, reason, claimToken);
 }
-async function runWorker(d: Deps, shared: SharedState): Promise<Result<void>> {
+async function runWorker(d: Deps, shared: SharedState, deadlineAt?: number): Promise<Result<void>> {
   const worker = { warm: emptyWarmSession() };
   while (true) {
+    if (expired(deadlineAt)) return err('BUDGET_EXCEEDED', 'Benchmark wall-clock limit exceeded');
     const c = await claim(d); if (!c.ok) { await notify(d, undefined, `Queue error: ${c.error.code}`, c.error.message); return c; }
     if (!c.value) {
       const next = await waitForWork(d, shared); if (!next.ok || next.value === 'stop') return next.ok ? ok(undefined) : next;
@@ -114,9 +129,9 @@ async function runWorker(d: Deps, shared: SharedState): Promise<Result<void>> {
   }
 }
 
-export async function runOrchestrator(deps: Deps): Promise<Result<void>> {
+export async function runOrchestrator(deps: Deps, deadlineAt?: number): Promise<Result<void>> {
   const shared = { sweepCounter: 0 }, count = Math.max(1, deps.config.maxParallelAgents);
-  const results = await Promise.all(Array.from({ length: count }, () => runWorker(deps, shared)));
+  const results = await Promise.all(Array.from({ length: count }, () => runWorker(deps, shared, deadlineAt)));
   const failure = results.find(result => !result.ok);
   return failure ?? ok(undefined);
 }

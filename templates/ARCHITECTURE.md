@@ -9,6 +9,7 @@
 - Keep this document current when the intended design changes.
 - Define the verification command in `verify.sh`.
 - Call out any files or directories that must stay stable.
+- Operators: install the Socket GitHub App and require `Socket Security: Pull Request Alerts` on `main`.
 
 ## Key flows
 - Describe the most important request, job, or UI flows.

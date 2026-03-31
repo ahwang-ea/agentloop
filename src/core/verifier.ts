@@ -8,6 +8,7 @@ import type { AgentloopConfig, TaskType, VerifyResult } from '../types/index.js'
 
 const exec = promisify(execFile);
 const quote = (value: string) => `'${value.replace(/'/g, `"'"'`)}'`;
+const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 12);
 
 export function truncateVerifyOutput(output: string): string {
   const lines = output.split('\n');
@@ -28,7 +29,7 @@ export async function runVerify(command: string, cwd = process.cwd(), env = proc
     let errors = parseVerifyOutput(output);
     if (errors.length === 0) {
       const fallback = output.trim() || `verify-exit-${error.code ?? 'unknown'}`;
-      errors = [{ source: 'build', message: fallback.slice(0, 500), hash: createHash('sha256').update(fallback).digest('hex').slice(0, 12) }];
+      errors = [{ source: 'build', message: fallback.slice(0, 500), hash: hash(fallback) }];
     }
     return ok({ pass: false, output, errors, duration });
   }
@@ -50,17 +51,47 @@ export async function progressiveVerify(
 function parseVerifyOutput(output: string) {
   const errors: { source: 'typecheck' | 'test' | 'lint' | 'build' | 'doc-freshness'; message: string; file?: string; line?: number; hash: string }[] = [];
   const lines = output.split('\n');
+  let failingTest: string | undefined, testName: string | undefined, expected: string | undefined, received: string | undefined, testLine: number | undefined, diff: string[] = [];
+  const pushTest = () => {
+    if (!failingTest || !testName) return;
+    const detail = expected || received ? `Expected: ${expected ?? '?'}; Received: ${received ?? '?'}` : diff.length > 0 ? `Diff: ${diff.slice(0, 6).join(' ')}` : '';
+    const message = [testName, detail].filter(Boolean).join(' — ');
+    errors.push({ source: 'test', file: failingTest, line: testLine, message, hash: hash(`${failingTest}:${testLine ?? 0}:${message}`) });
+    testName = undefined; expected = undefined; received = undefined; testLine = undefined; diff = [];
+  };
   for (const line of lines) {
     const match = line.match(/^(.+?):(\d+):\d+:\s*(error|warning):\s*(.+)/);
-    if (!match) continue;
-    const message = match[4];
-    errors.push({
-      source: 'typecheck',
-      message,
-      file: match[1],
-      line: parseInt(match[2], 10),
-      hash: createHash('sha256').update(`${match[1]}:${message}`).digest('hex').slice(0, 12),
-    });
+    if (match) {
+      pushTest();
+      const message = match[4];
+      errors.push({ source: 'typecheck', message, file: match[1], line: parseInt(match[2], 10), hash: hash(`${match[1]}:${message}`) });
+      continue;
+    }
+    const failed = line.match(/^FAIL\s+(.+)/);
+    if (failed) { pushTest(); failingTest = failed[1].trim(); continue; }
+    if (failingTest && line.includes('Your test suite must contain at least one test.')) {
+      pushTest();
+      const message = 'Your test suite must contain at least one test.';
+      errors.push({ source: 'test', file: failingTest, message, hash: hash(`${failingTest}:${message}`) });
+      failingTest = undefined;
+      continue;
+    }
+    const failedCase = failingTest ? line.match(/^\s*●\s+(.+)/) : null;
+    if (failingTest && failedCase) {
+      pushTest();
+      if (failedCase[1] === 'Test suite failed to run') continue;
+      testName = failedCase[1].trim();
+      diff = [];
+      continue;
+    }
+    if (!testName) continue;
+    const nextExpected = line.match(/^\s*Expected:\s+(.+)/); if (nextExpected) expected = nextExpected[1].trim();
+    const nextReceived = line.match(/^\s*Received:\s+(.+)/); if (nextReceived) received = nextReceived[1].trim();
+    const trimmed = line.trim();
+    if (diff.length < 6 && (/^[+-]\s{3,}/.test(trimmed) || trimmed === 'Object {')) diff.push(trimmed);
+    const location = line.match(/^\s*at Object\.<anonymous> \(([^:]+):(\d+):(\d+)\)/);
+    if (location && (!failingTest || location[1] === failingTest)) testLine = parseInt(location[2], 10);
   }
+  pushTest();
   return errors;
 }

@@ -31,6 +31,18 @@ test('checkoutBase returns the repo path when base is already checked out', asyn
   await expect(access(join(`${root}.worktrees`, '_base', 'main'))).rejects.toBeDefined();
 });
 
+test('checkoutBase reuses an existing worktree for a feature branch', async () => {
+  const root = await repo();
+  const git = createGitAdapter(cfg(root));
+  const branch = await git.createBranch('feature-types', 'main');
+  expect(branch.ok).toBe(true);
+  if (!branch.ok) return;
+  const checkedOut = await git.checkoutBase(branch.value.name);
+  expect(checkedOut.ok).toBe(true);
+  if (!checkedOut.ok) return;
+  expect(checkedOut.value.replace('/private', '')).toBe(branch.value.worktreePath.replace('/private', ''));
+});
+
 test('runIntentCheck works when the repo root already holds the base branch', async () => {
   const root = await repo(), current = await scanRepo(root);
   expect(current.ok).toBe(true);

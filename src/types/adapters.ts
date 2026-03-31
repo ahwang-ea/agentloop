@@ -58,6 +58,7 @@ export interface GitAdapter {
   abandonBranch(branch: string): Promise<Result<void>>;
   rebaseAll(base: string, except: string): Promise<Result<void>>;
   revertFiles(paths: string[], cwd: string): Promise<Result<void>>;
+  trackedFiles(paths: string[], cwd: string): Promise<Result<string[]>>;
   currentBranch(): Promise<Result<string>>;
 }
 
@@ -76,6 +77,7 @@ export interface TaskQueueAdapter {
   updateFinalization(taskId: string, finalization: FinalizationState, claimToken: string): Promise<Result<void>>;
   markDone(taskId: string, claimToken: string): Promise<Result<void>>;
   markStuck(taskId: string, reason: string, claimToken: string): Promise<Result<void>>;
+  markQueuedStuck(taskId: string, reason: string): Promise<Result<void>>;
   markBlocked(taskId: string, reason: string, details: Record<string, unknown>, claimToken: string): Promise<Result<void>>;
   requeueBlocked(taskId: string): Promise<Result<void>>;
   approveBlocked(taskId: string): Promise<Result<void>>;

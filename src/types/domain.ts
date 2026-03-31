@@ -15,6 +15,7 @@ export interface TaskDefinition {
   scope: TaskScope;
   acceptanceCriteria: string[];
   priority: TaskPriority;
+  dependsOn?: string[];
   createdAt: string;
 }
 export type TaskInput = Omit<TaskDefinition, 'id' | 'createdAt' | 'type'> & { type?: TaskType };

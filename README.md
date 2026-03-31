@@ -50,3 +50,15 @@ You never need to remember the process. The interactive start flow accepts a nat
 
 This package uses the same framework it enforces. See `AGENTS.md`, `ARCHITECTURE.md`, and `verify.sh`.
 Types live in `src/types/`. Run `npm run verify` to execute the package verification flow.
+
+## Supply chain protection
+
+This repo now includes Socket guardrails for dependency changes and installs.
+
+- CI uses Socket Firewall Free to run `sfw npm ci` on pushes and pull requests.
+- `.github/workflows/socket-security.yml` also supports full Socket scans when the `SOCKET_SECURITY_API_KEY` GitHub secret is configured.
+- `socket.yml` narrows Socket GitHub scanning to `package.json` and `package-lock.json` changes.
+- Root `.npmrc` sets `min-release-age=7`, and CI upgrades to npm `11.11.0` before install so the age gate is enforced consistently.
+- For local protection, install Socket CLI with `npm install -g socket`, run `socket wrapper on`, then restart your terminal or source your shell rc file.
+- If you prefer command-prefix mode, install `sfw` with `npm i -g sfw` and use `sfw npm ci` / `sfw npm install`.
+- After enabling the Socket GitHub App, make `Socket Security: Pull Request Alerts` a required check on `main`.

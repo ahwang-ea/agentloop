@@ -15,6 +15,10 @@ export interface AgentloopConfig {
   codexModel: string;
   codexEnabled: boolean;
   useCodexWriter?: boolean;
+  autoApproveResearch?: boolean;
+  autoApproveFeatures?: boolean;
+  reviewEnabled?: boolean;
+  readmeTasksEnabled?: boolean;
   convergence: ConvergenceConfig;
   slackWebhookUrl?: string;
   taskSource: 'file' | 'linear';

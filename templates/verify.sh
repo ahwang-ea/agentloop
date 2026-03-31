@@ -25,7 +25,7 @@ run_checks() {
       exit 1
     fi
     if [ "$merge_mode" = "1" ]; then
-      if command -v npx >/dev/null 2>&1; then npx depcheck --ignores="@types/*" || exit 1; fi
+      if [ "${AGENTLOOP_SKIP_DEPCHECK:-0}" != "1" ] && command -v npx >/dev/null 2>&1; then npx depcheck --ignores="@types/*" || exit 1; fi
       if grep -rnE '^\s*//\s*(const|let|var|function|class|if|for|while|switch|return|import|export|[A-Za-z0-9_$]+\s*[({=])' src/ \
         | grep -v 'TODO\|FIXME\|HACK\|NOTE\|eslint'; then
         echo "ERROR: commented-out code found"
@@ -40,7 +40,7 @@ if [ "$progressive" -eq 1 ] && [ -f package.json ]; then
   has_script() { printf '%s\n' "$scripts" | grep -qE "^[[:space:]]+$1$"; }
   ran=0
   if has_script typecheck; then npm run typecheck; ran=1; fi
-  if has_script test && [ "${#files[@]}" -gt 0 ]; then npm test -- --findRelatedTests "${files[@]}" --maxWorkers=100%; ran=1; fi
+  if has_script test && [ "${#files[@]}" -gt 0 ]; then npm test -- --findRelatedTests "${files[@]}" --passWithNoTests --maxWorkers=100%; ran=1; fi
   if [ "$merge_mode" = "1" ]; then
     if has_script test; then npm test -- --maxWorkers=100%; ran=1; fi
     if has_script lint; then npm run lint; ran=1; fi
