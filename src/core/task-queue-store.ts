@@ -4,14 +4,17 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, TaskDefinition, TaskInput, TaskState } from '../types/index.js';
 import { clearStaleLock } from './stale-lock.js';
-import { parseTaskRecords, type PersistedTaskRecord } from './task-queue-parse.js';
+import { parseTaskQueue, type PersistedTaskRecord } from './task-queue-parse.js';
 
 export type TaskRecord = PersistedTaskRecord;
+export type TaskQueueFile = { version?: number; tasks: TaskRecord[] };
 export type TaskClaim = NonNullable<TaskRecord['claim']>;
 export const activeTaskStatuses = new Set(['writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging']);
 const defaultTaskFile = 'tasks.json';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const withTaskType = (task: TaskDefinition): TaskDefinition => ({ ...task, type: task.type ?? 'implement' });
+const serializeTaskQueue = (queue: TaskQueueFile) =>
+  queue.version == null ? queue.tasks : { version: queue.version, tasks: queue.tasks };
 
 export const taskQueuePathOf = (config: AgentloopConfig) =>
   isAbsolute(config.taskFilePath ?? defaultTaskFile)
@@ -68,23 +71,23 @@ export async function withTaskQueueLock<T>(path: string, run: () => Promise<Resu
   }
 }
 
-export async function loadTaskQueue(path: string): Promise<Result<TaskRecord[]>> {
+export async function loadTaskQueue(path: string): Promise<Result<TaskQueueFile>> {
   try {
-    const parsed = parseTaskRecords(await readFile(path, 'utf-8'), path);
+    const parsed = parseTaskQueue(await readFile(path, 'utf-8'), path);
     return parsed.ok
-      ? ok(parsed.value.map(record => ({ ...record, task: withTaskType(record.task) })))
+      ? ok({ version: parsed.value.version, tasks: parsed.value.tasks.map(record => ({ ...record, task: withTaskType(record.task) })) })
       : err('QUEUE_CORRUPT', parsed.error.message);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' ? ok([]) : err('TRANSPORT_ERROR', `Cannot read queue ${path}`);
+    return code === 'ENOENT' ? ok({ tasks: [] }) : err('TRANSPORT_ERROR', `Cannot read queue ${path}`);
   }
 }
 
-export async function saveTaskQueue(path: string, tasks: TaskRecord[]): Promise<Result<void>> {
+export async function saveTaskQueue(path: string, queue: TaskQueueFile): Promise<Result<void>> {
   try {
     await mkdir(dirname(path), { recursive: true });
     const temp = `${path}.${randomUUID()}.tmp`;
-    await writeFile(temp, JSON.stringify(tasks, null, 2));
+    await writeFile(temp, JSON.stringify(serializeTaskQueue(queue), null, 2));
     await rename(temp, path);
     return ok(undefined);
   } catch {

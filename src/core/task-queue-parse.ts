@@ -4,6 +4,7 @@ import { asBoolean, asNumber, asObject, asObjectArray, asString, asStringArray, 
 
 type Lease = { token: string; expiresAt: string };
 export type PersistedTaskRecord = TaskState & { claim?: Lease; dedupeKey?: string };
+export type ParsedTaskQueue = { version?: number; tasks: PersistedTaskRecord[] };
 const status = new Set(['queued', 'writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging', 'finalizing', 'done', 'stuck', 'blocked']);
 const priority = new Set(['low', 'medium', 'high']);
 const taskType = new Set(['research', 'implement', 'integrate', 'debug']);
@@ -52,10 +53,20 @@ const recordOf = (value: JsonMap, path: string): Result<PersistedTaskRecord> => 
     : malformed(path, 'invalid task record');
 };
 
-export function parseTaskRecords(raw: string, path: string): Result<PersistedTaskRecord[]> {
+const versionOf = (value: unknown) => {
+  const object = asObject(value), version = object && asNumber(object.version);
+  return object && version != null && Object.hasOwn(object, 'tasks') ? version : undefined;
+};
+
+export function parseTaskQueue(raw: string, path: string): Result<ParsedTaskQueue> {
   const parsed = parseJson(raw, path); if (!parsed.ok) return parsed;
   const records = asObjectArray(unwrapVersioned(parsed.value, 'tasks')); if (!records) return malformed(path, 'task queue must be an array');
   const next: PersistedTaskRecord[] = [];
   for (const [index, record] of records.entries()) { const parsedRecord = recordOf(record, `${path}[${index}]`); if (!parsedRecord.ok) return parsedRecord; next.push(parsedRecord.value); }
-  return ok(next);
+  return ok({ version: versionOf(parsed.value), tasks: next });
+}
+
+export function parseTaskRecords(raw: string, path: string): Result<PersistedTaskRecord[]> {
+  const parsed = parseTaskQueue(raw, path);
+  return parsed.ok ? ok(parsed.value.tasks) : parsed;
 }

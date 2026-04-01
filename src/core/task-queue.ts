@@ -25,30 +25,31 @@ import {
   saveTaskQueue,
   stripTaskRecord,
   taskQueuePathOf,
+  type TaskQueueFile,
   type TaskRecord,
   withTaskQueueLock,
 } from './task-queue-store.js';
 
 export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
   const path = taskQueuePathOf(config);
-  const withRecords = <T>(run: (tasks: TaskRecord[]) => Promise<Result<T>>) => withTaskQueueLock(path, async () => {
-    const tasks = await loadTaskQueue(path);
-    return tasks.ok ? run(tasks.value) : tasks;
+  const withRecords = <T>(run: (queue: TaskQueueFile) => Promise<Result<T>>) => withTaskQueueLock(path, async () => {
+    const queue = await loadTaskQueue(path);
+    return queue.ok ? run(queue.value) : queue;
   });
-  const mutateRecords = (apply: (tasks: TaskRecord[]) => Result<void>) => withRecords(async tasks => {
-    const updated = apply(tasks);
-    return updated.ok ? saveTaskQueue(path, tasks) : updated;
+  const mutateRecords = (apply: (tasks: TaskRecord[]) => Result<void>) => withRecords(async queue => {
+    const updated = apply(queue.tasks);
+    return updated.ok ? saveTaskQueue(path, queue) : updated;
   });
-  const addRecord = async (tasks: TaskRecord[], task: TaskInput, dedupeKey?: string): Promise<Result<TaskRecord['task']>> => {
+  const addRecord = async (queue: TaskQueueFile, task: TaskInput, dedupeKey?: string): Promise<Result<TaskRecord['task']>> => {
     const record = createQueuedTaskRecord(task, dedupeKey);
-    tasks.push(record);
-    const saved = await saveTaskQueue(path, tasks);
+    queue.tasks.push(record);
+    const saved = await saveTaskQueue(path, queue);
     return saved.ok ? ok(record.task) : saved;
   };
 
   return {
     async claimNextActionable(maxParallelAgents) {
-      return withRecords(tasks => claimNextActionableTask(tasks, maxParallelAgents, () => saveTaskQueue(path, tasks)));
+      return withRecords(queue => claimNextActionableTask(queue.tasks, maxParallelAgents, () => saveTaskQueue(path, queue)));
     },
     async renewClaim(taskId, claimToken) { return mutateRecords(tasks => renewTaskClaim(tasks, taskId, claimToken)); },
     async updateStatus(taskId, status, claimToken) { return mutateRecords(tasks => updateTaskStatus(tasks, taskId, status, claimToken)); },
@@ -64,20 +65,20 @@ export function createFileTaskQueue(config: AgentloopConfig): TaskQueueAdapter {
     async releaseClaim(taskId, claimToken) { return mutateRecords(tasks => releaseTaskClaim(tasks, taskId, claimToken)); },
     async add(task) {
       const normalized = await normalizeTaskForRepo(config.repoPath, task);
-      return normalized.ok ? withRecords(tasks => addRecord(tasks, normalized.value)) : normalized;
+      return normalized.ok ? withRecords(queue => addRecord(queue, normalized.value)) : normalized;
     },
     async ensureTask(dedupeKey, task) {
       const normalized = await normalizeTaskForRepo(config.repoPath, task);
       if (!normalized.ok) return normalized;
-      return withRecords(async tasks => {
-        const existing = tasks.find(record => record.dedupeKey === dedupeKey);
-        return existing ? ok(existing.task) : addRecord(tasks, normalized.value, dedupeKey);
+      return withRecords(async queue => {
+        const existing = queue.tasks.find(record => record.dedupeKey === dedupeKey);
+        return existing ? ok(existing.task) : addRecord(queue, normalized.value, dedupeKey);
       });
     },
-    async countByDedupePrefix(prefix) { return withRecords(async tasks => ok(countByDedupePrefix(tasks, prefix))); },
+    async countByDedupePrefix(prefix) { return withRecords(async queue => ok(countByDedupePrefix(queue.tasks, prefix))); },
     async list() {
-      const tasks = await loadTaskQueue(path);
-      return tasks.ok ? ok(tasks.value.map(stripTaskRecord)) : tasks;
+      const queue = await loadTaskQueue(path);
+      return queue.ok ? ok(queue.value.tasks.map(stripTaskRecord)) : queue;
     },
   };
 }

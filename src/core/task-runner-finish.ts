@@ -39,7 +39,10 @@ export async function finishTaskRun(ctx: TaskRunContext, state: TaskRunState): P
     );
     if (!verified.ok) return err(verified.error.code, verified.error.message, verified.error.details);
   }
-  const finalVerify = await progressiveVerify(ctx.d.config, state.conv.changedFiles, ctx.worktreePath, true, ctx.task.type);
+  const finalVerify = await withLease(
+    () => progressiveVerify(ctx.d.config, state.conv.changedFiles, ctx.worktreePath, true, ctx.task.type),
+    () => ctx.d.queue.renewClaim(ctx.task.id, ctx.token),
+  );
   if (!finalVerify.ok) return err(finalVerify.error.code, finalVerify.error.message, finalVerify.error.details);
   if (shouldLogVerify()) {
     console.error(`[verify] ${ctx.task.id} merge ${finalVerify.value.pass ? 'pass' : 'fail'} files=${state.conv.changedFiles.join(', ') || '(none)'}`);
