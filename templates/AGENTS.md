@@ -16,6 +16,9 @@ List the languages, frameworks, package managers, and tools used here.
 - Pure functions only in service files. Side effects isolated in adapters.
 - No singletons. Pass dependencies as function arguments.
 - Time via dependency injection: never use `Date.now()` directly.
+- If a behavior must happen, enforce it in code (types, hooks, tests, `verify.sh`), not in this document. Prose rules are the weakest enforcement.
+- Changes to persisted types or shared interfaces must be additive-only by default. Never remove or rename a field without a migration path.
+- Every stateful artifact (files, caches, logs) needs a max size, cleanup rule, and owner. If it grows unbounded, it's a bug.
 
 ## Recommended lint rules
 - `no-unused-vars`: error
