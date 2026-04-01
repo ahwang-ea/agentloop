@@ -2,6 +2,8 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileTaskQueue } from '../task-queue.js';
+import { beginTaskFinalization, markTaskStuck, renewTaskClaim, updateTaskFinalization } from '../task-queue-transitions.js';
+import type { TaskRecord } from '../task-queue-store.js';
 
 type QueueRecord = {
   status: string;
@@ -30,6 +32,17 @@ const readRawQueue = async (repoPath: string) => {
   const raw = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as QueueFile;
   return { raw, records: Array.isArray(raw) ? raw : raw.tasks };
 };
+const finalization = { mergeCommit: 'abc', branch: 'al/queue-task', mergeInto: 'main', behaviorNotified: false, readmeTaskEnsured: false, completionNotified: false, rebaseDone: false, failCount: 0 };
+const taskRecord = (status: TaskRecord['status'], expiresAt = '2026-04-02T00:00:00.000Z'): TaskRecord => ({
+  task: { id: 'direct', title: 'Direct', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' },
+  status, round: 0, startedAt: '', claim: { token: 'claim', expiresAt }, finalization: status === 'finalizing' ? finalization : undefined,
+});
+const directClaimCases = [
+  ['renewClaim', 'writing', (tasks: TaskRecord[], claimToken: string) => renewTaskClaim(tasks, 'direct', claimToken)],
+  ['beginFinalization', 'writing', (tasks: TaskRecord[], claimToken: string) => beginTaskFinalization(tasks, 'direct', finalization, claimToken)],
+  ['updateFinalization', 'finalizing', (tasks: TaskRecord[], claimToken: string) => updateTaskFinalization(tasks, 'direct', { ...finalization, approved: true }, claimToken)],
+  ['markStuck', 'writing', (tasks: TaskRecord[], claimToken: string) => markTaskStuck(tasks, 'direct', 'stuck', claimToken)],
+] as const;
 
 test('requeueBlocked rejects tasks that are not blocked', async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-requeue-'));
@@ -97,6 +110,20 @@ for (const [name, run] of [
     expect((await queue.renewClaim(task.value.id, claimed.value.claimToken)).ok).toBe(true);
   });
 }
+
+test.each(directClaimCases)('directly rejects invalid claim for %s', (_name, status, run) => {
+  const tasks = [taskRecord(status)];
+  const rejected = run(tasks, 'wrong-token');
+  expect(rejected.ok).toBe(false);
+  expect(tasks[0]).toMatchObject({ status, claim: { token: 'claim' }, finalization: status === 'finalizing' ? finalization : undefined });
+});
+
+test.each(directClaimCases)('directly rejects expired claim for %s', (_name, status, run) => {
+  const tasks = [taskRecord(status, '2026-03-31T00:00:00.000Z')];
+  const rejected = run(tasks, 'claim');
+  expect(rejected.ok).toBe(false);
+  expect(tasks[0]).toMatchObject({ status, claim: { token: 'claim' }, finalization: status === 'finalizing' ? finalization : undefined });
+});
 
 test('rejects expired claims until the task is reclaimed', async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-expired-'));

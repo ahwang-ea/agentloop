@@ -89,14 +89,14 @@ test('skips cleanup verify loop when cleanup changes no files', async () => {
 });
 
 test('keeps initial non-retryable write failures non-retryable', async () => {
-  const cwd = await repo(), revertFiles = jest.fn(async () => ok(undefined));
+  const cwd = await repo(), revertFiles = jest.fn(async () => ok(undefined)), details = { phase: 'write' };
   const result = await runTask({
     config: { repoPath: cwd, verifyCommand: './verify.sh', baseBranch: 'main', reviewEnabled: false, useCodexWriter: false, claudeRetryDelayMs: 0 } as never,
-    claude: { startSession: async () => err('TRANSPORT_ERROR', 'permanent write failure') } as never,
+    claude: { startSession: async () => err('TRANSPORT_ERROR', 'permanent write failure', details) } as never,
     codex: {} as never, codexWriter: {} as never, git: { revertFiles } as never,
     queue: { updateProgress: async () => ok(undefined), updateStatus: async () => ok(undefined), beginFinalization: async () => ok(undefined), renewClaim: async () => ok(undefined) } as never,
     notifier: {} as never,
   } as never, task, 'al/task-5', 'main', cwd, undefined, 'claim-token', undefined, { session: undefined, tokens: 0 }, false);
-  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'TRANSPORT_ERROR', message: 'permanent write failure' }) });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'TRANSPORT_ERROR', message: 'permanent write failure', details }) });
   expect(revertFiles).not.toHaveBeenCalled();
 });

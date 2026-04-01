@@ -68,6 +68,21 @@ test('runTaskSetup records scaffold failures before continuing', async () => {
   expect(statuses).toEqual(['verifying', 'reviewing']);
 });
 
+
+test('runTaskSetup propagates scaffold progress failures', async () => {
+  const d = ctx([]) as any;
+  scaffoldTask.mockResolvedValueOnce(err('SESSION_ERROR', 'bad scaffold')); d.d.queue.updateProgress = async () => queueError('scaffold progress failed'); jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  const result = await runTaskSetup(d, undefined, undefined, true);
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'QUEUE_CORRUPT', message: 'scaffold progress failed' }) }); expect(verifyLoop).not.toHaveBeenCalled();
+});
+
+test('runTaskSetup preserves initial write failure details', async () => {
+  const details = { phase: 'write' };
+  withLease.mockResolvedValueOnce(err('TRANSPORT_ERROR', 'lease failed', details));
+  const result = await runTaskSetup(ctx([]) as any, undefined, undefined, false);
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'TRANSPORT_ERROR', message: 'lease failed', details }) });
+});
+
 test.each(setupFailureCases)('runTaskSetup propagates %s failures', async (_label, tweak, code, message) => {
   const d = ctx([]) as any; tweak(d);
   const result = await runTaskSetup(d, undefined, undefined, false);
@@ -93,6 +108,14 @@ test('finishTaskRun propagates cleanup writer and verify failures', async () => 
   runWriterCleanup.mockResolvedValueOnce(ok(writerOutput('cleanup', ['src/result.ts'], 3))); verifyLoop.mockResolvedValueOnce(err('VERIFY_FAILED', 'cleanup verify failed'));
   result = await finishTaskRun(ctx([]) as any, state());
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'VERIFY_FAILED', message: 'cleanup verify failed' }) }); expect(commitAndMergeTask).not.toHaveBeenCalled();
+});
+
+
+test('finishTaskRun preserves cleanup failure details', async () => {
+  const details = { phase: 'cleanup' };
+  withLease.mockResolvedValueOnce(err('SESSION_ERROR', 'cleanup failed', details));
+  const result = await finishTaskRun(ctx([]) as any, state());
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_ERROR', message: 'cleanup failed', details }) });
 });
 
 test('finishTaskRun propagates cleanup progress and final verify failures', async () => {

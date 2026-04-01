@@ -59,7 +59,7 @@ async function startInitialWrite(
     if (!reset.ok) return err(reset.error.code, reset.error.message, reset.error.details);
     started = await withLease(() => startWrite(ctx.d, ctx.task, ctx.worktreePath), () => ctx.d.queue.renewClaim(ctx.task.id, ctx.token));
   }
-  if (!started.ok) return err(started.error.code, started.error.message);
+  if (!started.ok) return err(started.error.code, started.error.message, started.error.details);
   ctx.usage.session = started.value.session;
   addTaskTokens(ctx.usage, started.value.output.tokenEstimate);
   const files = [...new Set([...scaffolded, ...started.value.output.changedFiles])];

@@ -25,7 +25,7 @@ export async function finishTaskRun(ctx: TaskRunContext, state: TaskRunState): P
     () => runWriterCleanup(ctx.d, state.started.session, ctx.task, ctx.worktreePath),
     () => ctx.d.queue.renewClaim(ctx.task.id, ctx.token),
   );
-  if (!cleanup.ok) return err(cleanup.error.code, cleanup.error.message);
+  if (!cleanup.ok) return err(cleanup.error.code, cleanup.error.message, cleanup.error.details);
   addTaskTokens(ctx.usage, cleanup.value.tokenEstimate);
   recordSessionChanges(state.conv, cleanup.value.changedFiles);
   const progress = await saveProgress(ctx, state);
