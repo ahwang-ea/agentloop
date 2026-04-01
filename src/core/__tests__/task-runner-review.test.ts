@@ -65,3 +65,23 @@ test('retries initial write once after a transient claude timeout', async () => 
   expect(waits).toBe(2);
   expect(reverts).toBe(1);
 });
+
+test('skips cleanup verify loop when cleanup changes no files', async () => {
+  const cwd = await repo();
+  const statuses: string[] = [];
+  const result = await runTask({
+    config: { repoPath: cwd, verifyCommand: './verify.sh', baseBranch: 'main', reviewEnabled: false, useCodexWriter: true } as never,
+    claude: {} as never, codex: {} as never,
+    codexWriter: { write: async () => ok({ text: 'wrote', changedFiles: ['src/result.ts'], tokenEstimate: 1 }), fix: async () => ok({ text: 'clean', changedFiles: [], tokenEstimate: 1 }) },
+    git: { commit: async () => ok('commit-1'), checkoutBase: async () => ok(cwd), merge: async () => ok('merge-1'), rebaseAll: async () => ok(undefined) } as never,
+    queue: {
+      updateProgress: async () => ok(undefined),
+      updateStatus: async (_id: string, status: string) => (statuses.push(status), ok(undefined)),
+      beginFinalization: async () => ok(undefined),
+      renewClaim: async () => ok(undefined),
+    } as never,
+    notifier: {} as never,
+  } as never, task, 'al/task-4', 'main', cwd, undefined, 'claim-token', undefined, { session: undefined, tokens: 0 }, false);
+  expect(result.ok).toBe(true);
+  expect(statuses).toEqual(['verifying', 'cleanup', 'merging']);
+});

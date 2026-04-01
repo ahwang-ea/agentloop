@@ -51,7 +51,7 @@ test('writes proposal on every twentieth task and notifies', async () => {
   const repoPath = await repo();
   await writeMetrics(repoPath, 20);
   await writeFile(join(repoPath, 'AGENTS.md'), '# AGENTS\n', 'utf-8');
-  const proposed = await maybeProposeAgentsUpdate(config(repoPath), { chat: async () => ok({ text: '--- AGENTS.md\n+++ AGENTS.md\n@@\n+# New rule', tokensDelta: 0, changedFiles: [], stopReason: 'end_turn' }) }, { send: async () => ok(undefined) });
+  const proposed = await maybeProposeAgentsUpdate(config(repoPath), { chat: async () => ok({ text: '--- AGENTS.md\n+++ AGENTS.md\n@@\n+# New rule', tokensDelta: 0, changedFiles: [], stopReason: 'end_turn' as const }) }, { send: async () => ok(undefined) });
   expect(proposed.ok && proposed.value).toBe(true);
   expect(await readFile(join(repoPath, '.agentloop', 'proposed-agents-update.md'), 'utf-8')).toContain('AGENTS.md');
 });
@@ -75,4 +75,30 @@ test('rejects proposals that still exceed the AGENTS line cap', async () => {
   const proposed = await maybeProposeAgentsUpdate(config(repoPath), { chat: async () => ok({ text: '--- AGENTS.md\n+++ AGENTS.md\n@@\n+# New rule', tokensDelta: 0, changedFiles: [], stopReason: 'end_turn' }) }, { send: async () => ok(undefined) });
   expect(proposed.ok).toBe(false);
   expect(!proposed.ok && proposed.error.code).toBe('CONFIG_ERROR');
+});
+
+test('serializes concurrent proposal writes', async () => {
+  const repoPath = await repo();
+  await writeMetrics(repoPath, 20);
+  await writeFile(join(repoPath, 'AGENTS.md'), '# AGENTS\n', 'utf-8');
+  let release = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let sends = 0;
+  const claude = {
+    chat: async () => {
+      await gate;
+      return ok({ text: '--- AGENTS.md\n+++ AGENTS.md\n@@\n+# New rule', tokensDelta: 0, changedFiles: [], stopReason: 'end_turn' as const });
+    },
+  };
+  const notifier = { send: async () => (sends += 1, ok(undefined)) };
+  const pending = Promise.all([
+    maybeProposeAgentsUpdate(config(repoPath), claude, notifier),
+    maybeProposeAgentsUpdate(config(repoPath), claude, notifier),
+  ]);
+  release();
+  const results = await pending;
+  expect(results.filter(result => result.ok && result.value)).toHaveLength(1);
+  expect(results.filter(result => result.ok && !result.value)).toHaveLength(1);
+  expect(sends).toBe(1);
+  expect(await readFile(join(repoPath, '.agentloop', 'proposed-agents-update.md'), 'utf-8')).toContain('AGENTS.md');
 });

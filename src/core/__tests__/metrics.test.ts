@@ -56,3 +56,16 @@ test('dedupes metrics summaries by latest timestamp', async () => {
   expect(parsed.value).toHaveLength(1);
   expect(parsed.value[0]).toMatchObject({ outcome: 'merged', timeSec: 360, timestamp: '2026-03-18T12:10:00.000Z' });
 });
+
+test('serializes concurrent metrics writes', async () => {
+  const repo = await repoPath();
+  const writes = Array.from({ length: 24 }, (_, i) => logMetrics(
+    { repoPath: repo }, task(`t${i}`, `Task ${i}`), 'merged',
+    { rounds: 1, timeSec: i + 1, reviewFindings: 0, errors: [`error_${i}`], files: [`src/file-${i}.ts`], timestamp: `2026-03-18T00:${String(i).padStart(2, '0')}:00.000Z` },
+  ));
+  const results = await Promise.all(writes);
+  expect(results.every(result => result.ok)).toBe(true);
+  const lines = (await readFile(join(repo, '.agentloop', 'metrics.jsonl'), 'utf-8')).trim().split('\n');
+  expect(lines).toHaveLength(24);
+  expect(new Set(lines.map(line => (JSON.parse(line) as { task_id: string }).task_id)).size).toBe(24);
+});

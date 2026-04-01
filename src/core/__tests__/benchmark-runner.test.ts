@@ -28,6 +28,33 @@ await jest.unstable_mockModule('../benchmark-acceptance.js', () => ({ runAccepta
 await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecords }));
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
+beforeEach(() => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  bootstrapBenchmarkRepo.mockReset();
+  createDeps.mockReset();
+  generatePlan.mockReset();
+  enqueuePlan.mockReset();
+  runOrchestrator.mockReset();
+  runAcceptanceTests.mockReset();
+  readMetricsRecords.mockReset();
+  bootstrapBenchmarkRepo.mockResolvedValue(ok('/tmp/agentloop-benchmark-runner'));
+  createDeps.mockResolvedValue(ok({ queue: { list: async () => ok([
+    { task: { id: 't1', title: 'Done', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' }, status: 'done', round: 1, startedAt: '' },
+    { task: { id: 't2', title: 'Queued', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' }, status: 'queued', round: 0, startedAt: '' },
+  ]) } } as never));
+  generatePlan.mockResolvedValue(ok([]));
+  enqueuePlan.mockResolvedValue(ok([]));
+  runOrchestrator.mockResolvedValue(err('BUDGET_EXCEEDED', 'timed out'));
+  runAcceptanceTests.mockResolvedValue(ok([{ name: 'compiles', passed: true }]));
+  readMetricsRecords.mockResolvedValue(ok([
+    { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },
+  ]));
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 const entry: BenchmarkCatalogEntry = {
   id: 'crm',
   fileStem: 'crm',
@@ -100,7 +127,6 @@ test('falls back to enqueued task counts when queue listing is empty', async () 
 
 
 test('retries transient planner failures before giving up', async () => {
-  generatePlan.mockReset();
   generatePlan
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: Repeated 529 Overloaded errors'))
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: 500 internal server error'))

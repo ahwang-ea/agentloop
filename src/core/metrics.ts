@@ -1,10 +1,11 @@
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { appendFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
 import type {
   AgentloopConfig, ConvergenceState, MetricsOutcome, MetricsRecord,
   ReviewFinding, TaskDefinition, TaskMetricsStats, TaskQueueAdapter, TaskState, VerifyError,
 } from '../types/index.js';
+import { withArtifactLock } from './artifact-lock.js';
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))].sort();
 const terminalAt = (state: TaskState) => state.completedAt ?? state.blocked?.blockedAt ?? new Date().toISOString();
@@ -63,19 +64,20 @@ export async function logMetrics(
     files: unique(stats.files),
     timestamp: stats.timestamp,
   };
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, `${JSON.stringify({
-      ...record,
-      time_sec: record.timeSec,
-      review_findings: record.reviewFindings,
-      timeSec: undefined,
-      reviewFindings: undefined,
-    })}\n`, 'utf-8');
-    return ok(undefined);
-  } catch (e) {
-    return err('TRANSPORT_ERROR', `Cannot append metrics ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
-  }
+  return withArtifactLock(path, 'metrics', async () => {
+    try {
+      await appendFile(path, `${JSON.stringify({
+        ...record,
+        time_sec: record.timeSec,
+        review_findings: record.reviewFindings,
+        timeSec: undefined,
+        reviewFindings: undefined,
+      })}\n`, 'utf-8');
+      return ok(undefined);
+    } catch (e) {
+      return err('TRANSPORT_ERROR', `Cannot append metrics ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
+    }
+  });
 }
 
 export async function logTaskMetrics(

@@ -59,26 +59,36 @@ describe('resolveConflicts', () => {
   });
 });
 
-test('runs Codex detail review before Claude sweep', async () => {
+test('runs reviews concurrently and returns stable ordering', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agentloop-review-'));
   const agents = join(root, 'AGENTS.md'), arch = join(root, 'ARCHITECTURE.md');
   await writeFile(agents, '# agents\n', 'utf-8');
   await writeFile(arch, '# architecture\n', 'utf-8');
-  const order: string[] = [];
+  const started: string[] = [];
+  let release = () => {};
+  const ready = new Promise<void>(resolve => { release = resolve; });
   const task = { id: 't', title: 'Task', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], type: 'implement' as const, priority: 'medium' as const, createdAt: '' };
   const codexReview = async (request: ReviewRequest) => {
-    order.push(request.role);
+    started.push(request.role);
+    await ready;
     return ok({ reviewer: request.role, findings: [], duration: 1, rawOutput: '{}' });
   };
   const claudeReview = async (request: ReviewRequest) => {
-    order.push(request.role);
+    started.push(request.role);
+    await ready;
     return ok({ reviewer: request.role, findings: [], duration: 1, rawOutput: '{}' });
   };
-  const result = await runSequentialReviews({
+  const pending = runSequentialReviews({
     config: { codexEnabled: true, agentsMdPath: agents, architectureMdPath: arch },
     codex: { review: codexReview },
     claude: { review: claudeReview } as never,
   }, task, 'diff');
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const startedBeforeRelease = [...started].sort();
+  release();
+  const result = await pending;
   expect(result.ok).toBe(true);
-  expect(order).toEqual(['codex-detail', 'opus-bigpicture']);
+  expect(startedBeforeRelease).toEqual(['codex-detail', 'opus-bigpicture']);
+  if (!result.ok) return;
+  expect(result.value.map(review => review.reviewer)).toEqual(['codex-detail', 'opus-bigpicture']);
 });

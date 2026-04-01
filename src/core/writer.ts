@@ -6,7 +6,7 @@ import { learningsAddendum } from './learnings.js';
 import { checkScope } from './scope.js';
 import { buildCleanupPrompt, buildFixPrompt, buildWritePrompt, concreteTargetsOf } from './writer-prompt.js';
 
-export interface WriterDeps { claude: ClaudeAdapter; codexWriter: CodexWriterAdapter; git: GitAdapter; config: Pick<AgentloopConfig, 'repoPath' | 'useCodexWriter'>; }
+export interface WriterDeps { claude: ClaudeAdapter; codexWriter: CodexWriterAdapter; git: GitAdapter; config: Pick<AgentloopConfig, 'repoPath' | 'useCodexWriter'> & { claudeRetryDelayMs?: number }; }
 export interface StartedWrite { session?: ClaudeSession; output: WriterOutput; }
 const invalid = (output: WriterOutput) => output.changedFiles.length === 0;
 const retryNote = 'You changed no files. Create or edit the required files now. Do not stop with only an explanation.';
@@ -20,6 +20,7 @@ const uniq = (items: string[]) => [...new Set(items.filter(Boolean))];
 const logWrite = (taskId: string, message: string) => (process.env.AGENTLOOP_LOG_WRITE === '1' || process.env.AGENTLOOP_LOG_VERIFY === '1') && console.error(`[write] ${taskId} ${message}`);
 const pack = (result: Result<WriterOutput>, session?: ClaudeSession): Result<StartedWrite> => result.ok ? ok({ session, output: result.value }) : err(result.error.code, result.error.message, result.error.details);
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const retryDelayMs = (d: WriterDeps) => Math.max(0, d.config.claudeRetryDelayMs ?? 3000);
 const targetNames = (task: TaskDefinition) => new Set(concreteTargetsOf(task).map(file => file.split('/').pop() ?? file));
 const siblingExamples = async (cwd: string, task: TaskDefinition) => {
   const examples: string[] = [], targets = targetNames(task);
@@ -97,7 +98,8 @@ const startClaude = async (d: WriterDeps, task: TaskDefinition, cwd: string, war
       nextPrompt = `${prompt}\n\nPrevious Claude attempt failed: ${output.error.message}\n${retryNote}\n${createNote}\n${fallbackNote}`;
       if (output.error.code === 'BUDGET_EXCEEDED') return output;
     }
-    if (attempt === 0) await pause(3000);
+    const delay = retryDelayMs(d);
+    if (attempt === 0 && delay > 0) await pause(delay);
   }
   return last;
 };

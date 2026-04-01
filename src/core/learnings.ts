@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, LearningEntry, MetricsRecord, NotifierAdapter, TaskDefinition } from '../types/index.js';
+import { withArtifactLock, writeTextAtomically } from './artifact-lock.js';
 import { metricsPath } from './metrics.js';
 
 const pathOf = (c: Pick<AgentloopConfig, 'repoPath'>, file: string) => join(c.repoPath, '.agentloop', file);
@@ -73,16 +74,13 @@ async function requestProposal(claude: Pick<ClaudeAdapter, 'chat'>, agentsMd: st
 }
 
 export async function syncLearnings(config: Pick<AgentloopConfig, 'repoPath'>): Promise<Result<LearningEntry[]>> {
-  const recent = await recentMetrics(config); if (!recent.ok) return recent;
-  const next = aggregate(recent.value.entries), target = pathOf(config, 'learnings.json');
-  const current = await readText(target); if (!current.ok) return current;
-  const serialized = JSON.stringify(next, null, 2);
-  if (current.value.trim() === serialized.trim()) return ok(next);
-  try {
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, serialized, 'utf-8');
-    return ok(next);
-  } catch { return err('TRANSPORT_ERROR', 'Cannot write learnings.json'); }
+  const target = pathOf(config, 'learnings.json');
+  return withArtifactLock(target, 'learnings', async () => {
+    const recent = await recentMetrics(config); if (!recent.ok) return recent;
+    const next = aggregate(recent.value.entries), current = await readText(target); if (!current.ok) return current;
+    const serialized = JSON.stringify(next, null, 2), saved = current.value.trim() === serialized.trim() ? ok(undefined) : await writeTextAtomically(target, serialized);
+    return saved.ok ? ok(next) : saved;
+  });
 }
 
 export async function learningsAddendum(config: Pick<AgentloopConfig, 'repoPath'>, task: TaskDefinition): Promise<Result<string>> {
@@ -108,10 +106,13 @@ export async function maybeProposeAgentsUpdate(
   }
   if (!projected.ok) return projected;
   if (projected.value > 100) return err('CONFIG_ERROR', `Proposed AGENTS.md update exceeds 100 lines (${projected.value})`);
-  try {
-    await mkdir(dirname(proposal), { recursive: true });
-    await writeFile(proposal, diff.value, 'utf-8');
-  } catch { return err('TRANSPORT_ERROR', 'Cannot write proposed-agents-update.md'); }
+  const wrote = await withArtifactLock(proposal, 'proposal', async () => {
+    const current = await readText(proposal); if (!current.ok) return current;
+    if (current.value.trim()) return ok(false);
+    const saved = await writeTextAtomically(proposal, diff.value);
+    return saved.ok ? ok(true) : saved;
+  });
+  if (!wrote.ok || !wrote.value) return wrote;
   const sent = await notifier.send({ type: 'promotion-ready', summary: 'AGENTS.md update proposed. Review in repo.', details: `Review ${proposal}`, timestamp: new Date().toISOString(), idempotencyKey: `agents-proposal:${recent.value.total}` });
   return sent.ok ? ok(true) : sent;
 }

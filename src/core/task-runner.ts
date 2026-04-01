@@ -56,8 +56,10 @@ export async function runTask(
   addTaskTokens(usage, cleanup.value.tokenEstimate);
   recordSessionChanges(conv, cleanup.value.changedFiles);
   p = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!p.ok) return p;
-  s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
-  r = await verifyLoop(d, started.value.session, task, cleanup.value.tokenEstimate, cleanup.value.changedFiles, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  if (cleanup.value.changedFiles.length > 0) {
+    s = await d.queue.updateStatus(task.id, 'verifying', token); if (!s.ok) return s;
+    r = await verifyLoop(d, started.value.session, task, cleanup.value.tokenEstimate, cleanup.value.changedFiles, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
+  }
   const fv = await progressiveVerify(d.config, conv.changedFiles, worktreePath, true, task.type); if (!fv.ok) return fv;
   if (shouldLogVerify()) {
     console.error(`[verify] ${task.id} merge ${fv.value.pass ? 'pass' : 'fail'} files=${conv.changedFiles.join(', ') || '(none)'}`);

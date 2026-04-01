@@ -41,8 +41,8 @@ test('cleanup allows a no-op codex response', async () => {
   expect(result.value.changedFiles).toEqual([]);
 });
 
-
 test('reverts new out-of-scope files from codex output', async () => {
+  jest.spyOn(console, 'warn').mockImplementationOnce(() => {});
   let reverted: string[] = [];
   const result = await startWrite({
     config: { repoPath: '.', useCodexWriter: true },
@@ -61,7 +61,6 @@ test('reverts new out-of-scope files from codex output', async () => {
   expect(reverted).toEqual(['src/__tests__/db.test.ts']);
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 
 test('initial no-op retry uses codex write, not fix', async () => {
   let attempts = 0;
@@ -82,7 +81,6 @@ test('initial no-op retry uses codex write, not fix', async () => {
   expect(fix).not.toHaveBeenCalled();
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 
 test('falls back to claude when codex write stays empty', async () => {
   let started = '';
@@ -105,7 +103,6 @@ test('falls back to claude when codex write stays empty', async () => {
   expect(result.value.session?.id).toBe('claude-1');
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 
 test('falls back to claude when codex leaves placeholder stubs', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'agentloop-writer-'));
@@ -132,11 +129,10 @@ test('falls back to claude when codex leaves placeholder stubs', async () => {
   expect(result.value.session?.id).toBe('claude-2');
 });
 
-
 test('retries claude fallback once after a transient failure', async () => {
   let waits = 0;
   const result = await startWrite({
-    config: { repoPath: '.', useCodexWriter: true },
+    config: { repoPath: '.', useCodexWriter: true, claudeRetryDelayMs: 0 },
     claude: {
       startSession: async () => ok({ id: 'claude-3', taskId: 'task-1' }),
       waitForStop: async () => ++waits === 1 ? err('SESSION_ERROR', 'temporary failure') : ok({ text: 'done', changedFiles: ['src/db/index.ts'], tokenEstimate: 1 }),

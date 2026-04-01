@@ -13,7 +13,9 @@ test('runs the full happy-path sequence to done', async () => {
   const run = await valueOf('happy');
   if (!run) return;
   expect(state(run.tasks)?.status).toBe('done');
-  expect(run.events).toEqual(['write', 'verify', 'codex-review', 'claude-review', 'cleanup', 'verify', 'verify', 'merge']);
+  expect(run.events.slice(0, 2)).toEqual(['write', 'verify']);
+  expect([...run.events.slice(2, 4)].sort()).toEqual(['claude-review', 'codex-review']);
+  expect(run.events.slice(4)).toEqual(['cleanup', 'verify', 'verify', 'merge']);
   expect(run.metrics).toContain('"outcome":"merged"');
   expect(run.metrics).toContain('src/greet.ts');
 });
