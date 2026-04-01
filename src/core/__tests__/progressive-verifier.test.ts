@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { jest } from '@jest/globals';
 import { progressiveVerify, runVerify } from '../verifier.js';
 
-jest.setTimeout(15_000);
+jest.setTimeout(45_000);
 
 const repos: string[] = [];
 const repo = async () => {

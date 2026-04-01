@@ -85,7 +85,6 @@ export async function scaffoldRepo(repoPath: string, options: ScaffoldOptions = 
     copyOnce(asset('hooks', 'scope-check.py'), join(repoPath, '.agentloop', 'hooks', 'scope-check.py'), summary, 0o755),
     copyOnce(asset('hooks', 'on-stop.py'), join(repoPath, '.agentloop', 'hooks', 'on-stop.py'), summary, 0o755),
     writeOnce(join(repoPath, '.agentloop', 'current-scope.json'), initialScopeFile(), summary),
-    writeOnce(join(repoPath, '.agentloop', 'session-status.json'), JSON.stringify({ status: 'idle' }, null, 2), summary),
     ...security,
   ];
   for (const result of await Promise.all(files)) if (!result.ok) return result;

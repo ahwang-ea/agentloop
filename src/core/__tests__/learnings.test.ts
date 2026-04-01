@@ -102,3 +102,14 @@ test('serializes concurrent proposal writes', async () => {
   expect(sends).toBe(1);
   expect(await readFile(join(repoPath, '.agentloop', 'proposed-agents-update.md'), 'utf-8')).toContain('AGENTS.md');
 });
+
+
+test('reads versioned learnings wrappers', async () => {
+  const repoPath = await repo();
+  await writeFile(join(repoPath, '.agentloop', 'learnings.json'), JSON.stringify({
+    version: 1,
+    entries: [{ pattern: 'missing ID validation', module: 'orders', count: 7, lastSeen: '2026-03-30', suggestion: 'add validation' }],
+  }, null, 2), 'utf-8');
+  const addendum = await learningsAddendum({ repoPath }, task);
+  expect(addendum.ok && addendum.value).toContain('missing ID validation');
+});

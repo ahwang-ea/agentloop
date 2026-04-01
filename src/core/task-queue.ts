@@ -5,17 +5,17 @@ import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import { ok, err, type Result } from '../shared/result.js';
 import { clearStaleLock } from './stale-lock.js';
+import { parseTaskRecords, type PersistedTaskRecord } from './task-queue-parse.js';
 import type { AgentloopConfig, ClaimedActionableTask, TaskDefinition, TaskQueueAdapter, TaskState } from '../types/index.js';
 import { canFeatureTaskRun } from './feature.js';
 import { normalizeTaskForRepo } from './monorepo.js';
 
-type Lease = { token: string; expiresAt: string };
-type TaskRecord = TaskState & { claim?: Lease; dedupeKey?: string };
+type TaskRecord = PersistedTaskRecord;
 const LEASE_MS = 5 * 60_000;
 const active = new Set(['writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging']);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const pathOf = (c: AgentloopConfig) => isAbsolute(c.taskFilePath ?? 'tasks.json') ? c.taskFilePath! : join(c.repoPath, c.taskFilePath ?? 'tasks.json');
-const expired = (claim?: Lease) => !claim || Date.parse(claim.expiresAt) <= Date.now();
+const expired = (claim?: TaskRecord['claim']) => !claim || Date.parse(claim.expiresAt) <= Date.now();
 const withType = (task: TaskDefinition): TaskDefinition => ({ ...task, type: task.type ?? 'implement' });
 const normalize = (task: TaskRecord): TaskRecord => ({ ...task, task: withType(task.task) });
 const strip = ({ claim: _c, dedupeKey: _d, ...task }: TaskRecord): TaskState => ({ ...task, task: withType(task.task) });
@@ -38,12 +38,12 @@ async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise
   try { return await run(); } finally { await rm(lock, { recursive: true, force: true }); }
 }
 async function load(path: string): Promise<Result<TaskRecord[]>> {
-  try { return ok((JSON.parse(await readFile(path, 'utf-8')) as TaskRecord[]).map(normalize)); }
-  catch (e) {
+  try {
+    const parsed = parseTaskRecords(await readFile(path, 'utf-8'), path);
+    return parsed.ok ? ok(parsed.value.map(normalize)) : err('QUEUE_CORRUPT', parsed.error.message);
+  } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return ok([]);
-    if (e instanceof SyntaxError) return err('QUEUE_CORRUPT', `Malformed queue file ${path}`);
-    return err('TRANSPORT_ERROR', `Cannot read queue ${path}`);
+    return code === 'ENOENT' ? ok([]) : err('TRANSPORT_ERROR', `Cannot read queue ${path}`);
   }
 }
 async function save(path: string, tasks: TaskRecord[]): Promise<Result<void>> {
@@ -55,7 +55,7 @@ async function save(path: string, tasks: TaskRecord[]): Promise<Result<void>> {
     return ok(undefined);
   } catch { return err('TRANSPORT_ERROR', `Cannot write queue ${path}`); }
 }
-function lease(): Lease { return { token: randomUUID(), expiresAt: new Date(Date.now() + LEASE_MS).toISOString() }; }
+function lease() { return { token: randomUUID(), expiresAt: new Date(Date.now() + LEASE_MS).toISOString() }; }
 function countActive(tasks: TaskRecord[]): number { return tasks.filter(t => active.has(t.status) && t.claim && !expired(t.claim)).length; }
 function withClaim(tasks: TaskRecord[], taskId: string, token: string): Result<TaskRecord> {
   const task = tasks.find(t => t.task.id === taskId);

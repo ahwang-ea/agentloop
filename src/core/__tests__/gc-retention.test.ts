@@ -1,11 +1,13 @@
-import { access, mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readBenchmarkResults } from '../benchmark-results.js';
 import { pruneGcArchives } from '../gc-retention.js';
 
 const repo = () => mkdtemp(join(tmpdir(), 'agentloop-gc-retention-'));
 const config = (repoPath: string) => ({ repoPath } as const);
 const exists = (path: string) => access(path).then(() => true).catch(() => false);
+const result = (suite: string, timestamp: string, version?: number) => ({ ...(version == null ? {} : { version }), suite, timestamp, duration: 1, tasksTotal: 1, tasksCompleted: 1, tasksStuck: 0, avgRounds: 1, avgTimeSec: 1, firstPassRate: 100, acceptanceTests: [{ name: 'compiles', passed: true }], score: 1, metricsSnapshot: [] });
 
 test('prunes archive.jsonl entries older than 180 days', async () => {
   const repoPath = await repo(), path = join(repoPath, '.agentloop', 'archive.jsonl');
@@ -37,4 +39,32 @@ test('prunes stale metrics and research archive files', async () => {
   expect(await exists(oldResearch)).toBe(false);
   expect(await exists(freshMetrics)).toBe(true);
   expect(await exists(freshResearch)).toBe(true);
+});
+
+test('prunes benchmark results to the newest 20 files per suite', async () => {
+  const repoPath = await repo(), resultsDir = join(repoPath, 'benchmarks', 'results');
+  await mkdir(resultsDir, { recursive: true });
+  for (let day = 1; day <= 22; day += 1) await writeFile(join(resultsDir, `crm-2026-01-${String(day).padStart(2, '0')}T00-00-00Z.json`), `${JSON.stringify(result('crm', `2026-01-${String(day).padStart(2, '0')}T00:00:00.000Z`, 2))}\n`, 'utf-8');
+  await writeFile(join(resultsDir, 'erp-2026-01-01T00-00-00Z.json'), `${JSON.stringify(result('erp', '2026-01-01T00:00:00.000Z', 2))}\n`, 'utf-8');
+  const pruned = await pruneGcArchives(config(repoPath), Date.parse('2026-03-30T00:00:00.000Z'));
+  expect(pruned.ok).toBe(true);
+  const files = await readdir(resultsDir);
+  expect(files).toHaveLength(21);
+  expect(files).not.toContain('crm-2026-01-01T00-00-00Z.json');
+  expect(files).not.toContain('crm-2026-01-02T00-00-00Z.json');
+  expect(files).toContain('crm-2026-01-22T00-00-00Z.json');
+  expect(files).toContain('erp-2026-01-01T00-00-00Z.json');
+});
+
+test('reads additive future benchmark result versions', async () => {
+  const repoPath = await repo(), resultsDir = join(repoPath, 'benchmarks', 'results');
+  await mkdir(resultsDir, { recursive: true });
+  await writeFile(join(resultsDir, 'legacy.json'), `${JSON.stringify(result('legacy', '2026-03-30T00:00:00.000Z'))}\n`, 'utf-8');
+  await writeFile(join(resultsDir, 'future.json'), `${JSON.stringify({ ...result('future', '2026-03-31T00:00:00.000Z', 3), retainedField: 'ignored' })}\n`, 'utf-8');
+  const loaded = await readBenchmarkResults(repoPath);
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  expect(loaded.value).toHaveLength(2);
+  expect(loaded.value.find(item => item.suite === 'legacy')?.version).toBeUndefined();
+  expect(loaded.value.find(item => item.suite === 'future')?.version).toBe(2);
 });

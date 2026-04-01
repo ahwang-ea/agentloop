@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileTaskQueue } from '../task-queue.js';
@@ -43,4 +43,21 @@ test('markQueuedStuck only marks queued tasks', async () => {
   expect(raw[0]).toMatchObject({ status: 'stuck', stuckReason: 'dependency failed' });
   const rejected = await queue.markQueuedStuck(task.value.id, 'again');
   expect(rejected.ok).toBe(false);
+});
+
+
+test('reads versioned queue wrappers', async () => {
+  const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-wrapper-'));
+  await writeFile(join(repoPath, 'tasks.json'), JSON.stringify({
+    version: 1,
+    tasks: [{
+      task: { id: 'wrapped', title: 'Wrapped', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '2026-04-01T00:00:00.000Z' },
+      status: 'queued', round: 0, startedAt: '2026-04-01T00:00:00.000Z',
+    }],
+  }), 'utf-8');
+  const listed = await createFileTaskQueue(config(repoPath)).list();
+  expect(listed.ok).toBe(true);
+  if (!listed.ok) return;
+  expect(listed.value).toHaveLength(1);
+  expect(listed.value[0].task.id).toBe('wrapped');
 });

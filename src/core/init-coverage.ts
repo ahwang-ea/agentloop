@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { err, ok, type Result } from '../shared/result.js';
+import { asNumber, asObject, asString, asStringArray, parseJson } from './persisted-json.js';
 import type { RepoInventory } from '../types/index.js';
 import type { InitDraftBundle } from './init-drafts.js';
 import { DEFAULT_CONFIG } from './cli-config.js';
@@ -27,11 +28,12 @@ export async function checkInitCoverage(inventory: RepoInventory, drafts: InitDr
     });
     const raw = response.choices[0]?.message?.content ?? '';
     if (!raw.trim()) return err('EMPTY_RESPONSE', 'Init coverage returned no content');
-    const parsed = JSON.parse(raw) as Partial<InitCoverage>;
-    const missing = Array.isArray(parsed.missing) ? parsed.missing.filter(item => typeof item === 'string' && item.trim()) : [];
-    const covered = typeof parsed.covered === 'number' ? parsed.covered : 0;
-    const total = typeof parsed.total === 'number' ? parsed.total : covered + missing.length;
-    const summary = typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary : `${covered}/${total} items covered.`;
+    const parsed = parseJson(raw, 'init coverage response'); if (!parsed.ok) return err('TRANSPORT_ERROR', `Init coverage failed: ${parsed.error.message}`);
+    const body = asObject(parsed.value); if (!body) return err('TRANSPORT_ERROR', 'Init coverage failed: response must be an object');
+    const missing = (asStringArray(body.missing) ?? []).filter(item => item.trim());
+    const covered = asNumber(body.covered) ?? 0;
+    const total = asNumber(body.total) ?? (covered + missing.length);
+    const summary = asString(body.summary)?.trim() ? asString(body.summary)! : `${covered}/${total} items covered.`;
     return ok({ covered, total, summary, missing });
   } catch (e) {
     return err('TRANSPORT_ERROR', `Init coverage failed: ${e instanceof Error ? e.message : 'unknown error'}`);

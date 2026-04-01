@@ -30,9 +30,9 @@ const parseTask = (raw: string): Result<TaskInput> => {
 };
 
 export async function analyzeImprovements(d: ImproverDeps, resultPath?: string): Promise<Result<ImprovementAnalysis>> {
-  const [agents, architecture, all] = await Promise.all([readRepoFile(d.config.repoPath, d.config.agentsMdPath), readRepoFile(d.config.repoPath, d.config.architectureMdPath), readBenchmarkResults()]);
+  const [agents, architecture, all] = await Promise.all([readRepoFile(d.config.repoPath, d.config.agentsMdPath), readRepoFile(d.config.repoPath, d.config.architectureMdPath), readBenchmarkResults(d.config.repoPath)]);
   if (!agents.ok) return agents; if (!architecture.ok) return architecture; if (!all.ok) return all;
-  const selected = resultPath ? await readBenchmarkResult(resultPath) : ok(latestBenchmarkResults(all.value)); if (!selected.ok) return selected;
+  const selected = resultPath ? await readBenchmarkResult(resultPath, d.config.repoPath) : ok(latestBenchmarkResults(all.value)); if (!selected.ok) return selected;
   const prompt = [
     'Analyze these benchmark results and propose improvements. Return ONLY JSON.',
     'Schema: { findings: [{ pattern, evidence, impact }], proposals: [{ title, description, target }] }.',

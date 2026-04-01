@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeInventory } from '../scanner.js';
+import { readInventory, writeInventory } from '../scanner.js';
 
 test('writes repo inventory with patterns, tests, and env mismatches', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'agentloop-scan-'));
@@ -24,4 +24,23 @@ test('writes repo inventory with patterns, tests, and env mismatches', async () 
   expect(written.importFrequency[0]?.path).toBe('src/helper.ts');
   expect(written.env.unusedInExample).toContain('UNUSED');
   expect(written.oversizedFiles).toEqual(['src/too-big.ts']);
+});
+
+
+test('reads versioned inventory wrappers', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'agentloop-scan-'));
+  await mkdir(join(repo, '.agentloop'), { recursive: true });
+  await writeFile(join(repo, '.agentloop', 'inventory.json'), JSON.stringify({
+    version: 1,
+    inventory: {
+      scannedAt: '2026-04-01T00:00:00.000Z', files: [], monorepo: false, packages: [], crossPackageImports: [],
+      patterns: { resultCount: 0, tryCatchCount: 0, serviceFileCount: 0, controllerFileCount: 0 },
+      tests: { frameworks: [], count: 0 }, docs: [], dependencies: [],
+      env: { example: [], referenced: [], missingInExample: [], unusedInExample: [] }, oversizedFiles: [], ci: [], importFrequency: [],
+    },
+  }), 'utf-8');
+  const read = await readInventory(repo);
+  expect(read.ok).toBe(true);
+  if (!read.ok || !read.value) return;
+  expect(read.value.version).toBe(1);
 });

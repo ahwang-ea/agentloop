@@ -114,6 +114,7 @@ export interface InventoryPackage { name: string; path: string; }
 export interface InventoryDoc { path: string; modifiedAt: string; }
 export interface InventoryDependencyFile { path: string; kind: 'package.json' | 'pyproject.toml'; dependencies: string[]; }
 export interface RepoInventory {
+  version?: 1;
   scannedAt: string;
   files: InventoryFile[];
   monorepo: boolean;

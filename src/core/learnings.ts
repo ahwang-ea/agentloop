@@ -4,6 +4,7 @@ import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, LearningEntry, MetricsRecord, NotifierAdapter, TaskDefinition } from '../types/index.js';
 import { withArtifactLock, writeTextAtomically } from './artifact-lock.js';
 import { metricsPath } from './metrics.js';
+import { asNumber, asObjectArray, asString, parseJson, unwrapVersioned } from './persisted-json.js';
 
 const pathOf = (c: Pick<AgentloopConfig, 'repoPath'>, file: string) => join(c.repoPath, '.agentloop', file);
 const agentsPath = (c: Pick<AgentloopConfig, 'repoPath' | 'agentsMdPath'>) => isAbsolute(c.agentsMdPath) ? c.agentsMdPath : join(c.repoPath, c.agentsMdPath);
@@ -31,9 +32,18 @@ const proposalPrompt = (agentsMd: string, entries: MetricsRecord[], retry?: stri
   JSON.stringify(entries, null, 2),
 ].filter(Boolean).join('\n');
 
-async function readJson<T>(path: string, fallback: T): Promise<Result<T>> {
-  try { return ok(JSON.parse(await readFile(path, 'utf-8')) as T); }
-  catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? ok(fallback) : err('TRANSPORT_ERROR', `Cannot read ${path}`); }
+async function readLearnings(path: string): Promise<Result<LearningEntry[]>> {
+  try {
+    const parsed = parseJson(await readFile(path, 'utf-8'), path); if (!parsed.ok) return parsed;
+    const items = asObjectArray(unwrapVersioned(parsed.value, 'entries')); if (!items) return err('TRANSPORT_ERROR', `Malformed ${path}: invalid learnings`);
+    const learnings: LearningEntry[] = [];
+    for (const item of items) {
+      const pattern = asString(item.pattern), module = asString(item.module), count = asNumber(item.count), lastSeen = asString(item.lastSeen), suggestion = asString(item.suggestion);
+      if (!pattern || !module || count == null || !lastSeen || !suggestion) return err('TRANSPORT_ERROR', `Malformed ${path}: invalid learning entry`);
+      learnings.push({ pattern, module, count, lastSeen, suggestion });
+    }
+    return ok(learnings);
+  } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? ok([]) : err('TRANSPORT_ERROR', `Cannot read ${path}`); }
 }
 async function readText(path: string, fallback = ''): Promise<Result<string>> {
   try { return ok(await readFile(path, 'utf-8')); }
@@ -41,8 +51,14 @@ async function readText(path: string, fallback = ''): Promise<Result<string>> {
 }
 async function recentMetrics(config: Pick<AgentloopConfig, 'repoPath'>): Promise<Result<{ total: number; entries: MetricsRecord[] }>> {
   try {
-    const lines = (await readFile(metricsPath(config), 'utf-8')).trim().split('\n').filter(Boolean);
-    return ok({ total: lines.length, entries: lines.slice(-20).map(line => JSON.parse(line) as MetricsRecord) });
+    const path = metricsPath(config), lines = (await readFile(path, 'utf-8')).trim().split('\n').filter(Boolean), entries: MetricsRecord[] = [];
+    for (const line of lines.slice(-20)) {
+      const parsed = parseJson(line, path); if (!parsed.ok) return err('TRANSPORT_ERROR', 'Cannot read metrics.jsonl');
+      const item = parsed.value as Partial<MetricsRecord> & { time_sec?: number; review_findings?: number; task_type?: MetricsRecord['taskType']; token_total?: number; verify_time_sec?: number; };
+      if (typeof item.task_id !== 'string' || typeof item.task !== 'string' || typeof item.timestamp !== 'string') return err('TRANSPORT_ERROR', 'Cannot read metrics.jsonl');
+      entries.push({ version: item.version === 2 ? 2 : undefined, task_id: item.task_id, task: item.task, rounds: typeof item.rounds === 'number' ? item.rounds : 0, timeSec: typeof item.time_sec === 'number' ? item.time_sec : 0, reviewFindings: typeof item.review_findings === 'number' ? item.review_findings : 0, outcome: item.outcome ?? 'blocked', errors: Array.isArray(item.errors) ? item.errors.filter((value): value is string => typeof value === 'string') : [], files: Array.isArray(item.files) ? item.files.filter((value): value is string => typeof value === 'string') : [], timestamp: item.timestamp, taskType: item.task_type ?? item.taskType, tokenTotal: typeof item.token_total === 'number' ? item.token_total : typeof item.tokenTotal === 'number' ? item.tokenTotal : undefined, verifyTimeSec: typeof item.verify_time_sec === 'number' ? item.verify_time_sec : typeof item.verifyTimeSec === 'number' ? item.verifyTimeSec : undefined });
+    }
+    return ok({ total: lines.length, entries });
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === 'ENOENT' ? ok({ total: 0, entries: [] }) : err('TRANSPORT_ERROR', 'Cannot read metrics.jsonl');
   }
@@ -84,7 +100,7 @@ export async function syncLearnings(config: Pick<AgentloopConfig, 'repoPath'>): 
 }
 
 export async function learningsAddendum(config: Pick<AgentloopConfig, 'repoPath'>, task: TaskDefinition): Promise<Result<string>> {
-  const learnings = await readJson<LearningEntry[]>(pathOf(config, 'learnings.json'), []); if (!learnings.ok) return learnings;
+  const learnings = await readLearnings(pathOf(config, 'learnings.json')); if (!learnings.ok) return learnings;
   const modules = [...new Set(task.scope.editableFiles.map(moduleOf))];
   return ok(addendum(learnings.value.filter(item => modules.includes(item.module)).sort(byValue).slice(0, 3)));
 }

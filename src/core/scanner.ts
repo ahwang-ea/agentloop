@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
+import { parseInventory } from './inventory-parse.js';
 import type { InventoryDependencyFile, InventoryDoc, InventoryFile, InventoryPackage, RepoInventory } from '../types/index.js';
 
 const IGNORE = new Set(['.git', '.agentloop', '.context', 'dist', 'node_modules']);
@@ -77,6 +78,7 @@ export async function scanRepo(repoPath: string): Promise<Result<RepoInventory>>
     }
     const example = envExample([bodies.get('.env.example') ?? '', bodies.get('.env.sample') ?? ''].join('\n'));
     return ok({
+      version: 1,
       scannedAt: new Date().toISOString(),
       files,
       monorepo: workspaces || packages.length > 1,
@@ -110,7 +112,8 @@ export async function writeInventory(repoPath: string): Promise<Result<RepoInven
 }
 
 export async function readInventory(repoPath: string): Promise<Result<RepoInventory | undefined>> {
-  try { return ok(JSON.parse(await readFile(join(repoPath, '.agentloop', 'inventory.json'), 'utf-8')) as RepoInventory); }
+  const path = join(repoPath, '.agentloop', 'inventory.json');
+  try { return parseInventory(await readFile(path, 'utf-8'), path); }
   catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return ok(undefined);
     return err('TRANSPORT_ERROR', `Cannot read inventory.json: ${e instanceof Error ? e.message : 'unknown error'}`);
