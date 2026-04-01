@@ -4,6 +4,7 @@ import type { AgentloopConfig } from '../types/index.js';
 import { benchmarkCatalog, findBenchmark } from '../benchmarks/index.js';
 import { formatBenchmarkTable, saveBenchmarkResult } from './benchmark-results.js';
 import { runBenchmarkSuite } from './benchmark-runner.js';
+import { runBenchmarkPreflight } from './preflight.js';
 
 interface BenchmarkOptions { list: boolean; suite?: string; }
 
@@ -12,7 +13,7 @@ export async function runBenchmark(config: AgentloopConfig, options: BenchmarkOp
     console.log(benchmarkCatalog.map(entry => `${entry.id} — ${entry.suite.name}`).join('\n'));
     return ok(undefined);
   }
-  if (!process.env.ANTHROPIC_API_KEY || !process.env.OPENAI_API_KEY) return err('CONFIG_ERROR', 'benchmark requires ANTHROPIC_API_KEY and OPENAI_API_KEY');
+  const preflight = await runBenchmarkPreflight(config); if (!preflight.ok) return preflight;
   const match = options.suite ? findBenchmark(options.suite) : undefined;
   const entries = options.suite === 'all' ? benchmarkCatalog : match ? [match] : [];
   if (entries.length === 0) return err('CONFIG_ERROR', `Unknown benchmark suite: ${options.suite ?? '(missing)'}`);

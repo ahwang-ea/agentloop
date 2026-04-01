@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,8 @@ const task = {
   priority: 'medium' as const,
   createdAt: new Date().toISOString(),
 };
+
+afterEach(() => { jest.restoreAllMocks(); });
 
 test('parses scaffold JSON with content and golden-copy files', () => {
   const parsed = parseScaffoldOutput('```json\n{"files":[{"type":"stub","path":"src/parser.ts","content":"stub"},{"type":"golden-copy","path":"src/parser.test.ts","referencePath":"src/example.test.ts"}]}\n```');
@@ -56,6 +59,7 @@ test('asks Claude for scaffold output and writes it', async () => {
 
 
 test('skips out-of-scope scaffold files', async () => {
+  jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   const repoPath = await repo();
   const applied = await scaffoldTask({
     scaffold: async () => ok({ files: [

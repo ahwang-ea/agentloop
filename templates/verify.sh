@@ -4,6 +4,7 @@ set -euo pipefail
 progressive=0
 merge_mode="${AGENTLOOP_MERGE_CHECK:-0}"
 files=()
+test_args=(--maxWorkers=100%)
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --progressive) progressive=1 ;;
@@ -40,9 +41,9 @@ if [ "$progressive" -eq 1 ] && [ -f package.json ]; then
   has_script() { printf '%s\n' "$scripts" | grep -qE "^[[:space:]]+$1$"; }
   ran=0
   if has_script typecheck; then npm run typecheck; ran=1; fi
-  if has_script test && [ "${#files[@]}" -gt 0 ]; then npm test -- --findRelatedTests "${files[@]}" --passWithNoTests --maxWorkers=100%; ran=1; fi
+  if has_script test && [ "${#files[@]}" -gt 0 ]; then npm test -- --findRelatedTests "${files[@]}" --passWithNoTests "${test_args[@]}"; ran=1; fi
   if [ "$merge_mode" = "1" ]; then
-    if has_script test; then npm test -- --maxWorkers=100%; ran=1; fi
+    if has_script test; then npm test -- "${test_args[@]}"; ran=1; fi
     if has_script lint; then npm run lint; ran=1; fi
   fi
   if [ "$ran" -eq 1 ]; then run_checks; exit 0; fi
@@ -58,7 +59,7 @@ if [ -f package.json ]; then
   else
     if has_script lint; then npm run lint; ran=1; fi
     if has_script typecheck; then npm run typecheck; ran=1; fi
-    if has_script test; then npm test -- --maxWorkers=100%; ran=1; fi
+    if has_script test; then npm test -- "${test_args[@]}"; ran=1; fi
     if has_script build; then npm run build; ran=1; fi
   fi
   if [ "$ran" -eq 1 ]; then run_checks; exit 0; fi

@@ -13,6 +13,15 @@ const issue = (
   line?: number,
 ): ReviewFinding => ({ reviewer, severity: 'issue', description, topicKey: 'topic', action, file, line });
 
+const waitForStarts = async (started: string[], count: number, timeoutMs = 1000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (started.length >= count) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${count} reviews to start`);
+};
+
 describe('resolveConflicts', () => {
   let findings: ReviewFinding[];
 
@@ -83,7 +92,7 @@ test('runs reviews concurrently and returns stable ordering', async () => {
     codex: { review: codexReview },
     claude: { review: claudeReview } as never,
   }, task, 'diff');
-  await new Promise(resolve => setTimeout(resolve, 50));
+  await waitForStarts(started, 2);
   const startedBeforeRelease = [...started].sort();
   release();
   const result = await pending;

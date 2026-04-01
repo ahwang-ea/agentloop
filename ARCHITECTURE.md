@@ -163,8 +163,8 @@ to support file edit interception, switch to hook-based enforcement.
 
 ### Layer 2: Orchestrator State Machine (per-task, deterministic)
 TypeScript code in orchestrator.ts. A simple loop:
-  pick task → spawn session → verify loop → Codex self-review →
-  Claude coherence sweep → fix if needed → cleanup → final verify →
+  pick task → spawn session → verify loop → concurrent Codex detail review
+  + Claude coherence sweep → fix if needed → cleanup → final verify →
   merge → behavior check → notify → next task
 Each transition is an if-statement, not a prompt.
 

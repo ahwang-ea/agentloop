@@ -29,7 +29,7 @@ await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecor
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
 beforeEach(() => {
-  jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   bootstrapBenchmarkRepo.mockReset();
   createDeps.mockReset();
   generatePlan.mockReset();

@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
+import { writeStderr, writeStderrIf } from '../shared/stderr.js';
 import type { AgentloopConfig, ClaudeAdapter, ClaudeSession, CodexWriterAdapter, GitAdapter, TaskDefinition, WriterOutput } from '../types/index.js';
 import { learningsAddendum } from './learnings.js';
 import { checkScope } from './scope.js';
@@ -17,7 +18,7 @@ const testFile = (file: string) => /\.test\.[cm]?[jt]sx?$/.test(file);
 const codeFile = (file: string) => /\.[cm]?[jt]sx?$/.test(file);
 const commented = /^\s*\/\/\s*(const|let|var|function|class|if|for|while|switch|return|import|export|[A-Za-z0-9_$]+\s*[({=])/m;
 const uniq = (items: string[]) => [...new Set(items.filter(Boolean))];
-const logWrite = (taskId: string, message: string) => (process.env.AGENTLOOP_LOG_WRITE === '1' || process.env.AGENTLOOP_LOG_VERIFY === '1') && console.error(`[write] ${taskId} ${message}`);
+const logWrite = (taskId: string, message: string) => writeStderrIf(process.env.AGENTLOOP_LOG_WRITE === '1' || process.env.AGENTLOOP_LOG_VERIFY === '1', `[write] ${taskId} ${message}`);
 const pack = (result: Result<WriterOutput>, session?: ClaudeSession): Result<StartedWrite> => result.ok ? ok({ session, output: result.value }) : err(result.error.code, result.error.message, result.error.details);
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const retryDelayMs = (d: WriterDeps) => Math.max(0, d.config.claudeRetryDelayMs ?? 3000);
@@ -57,7 +58,7 @@ async function enforceScope(d: WriterDeps, task: TaskDefinition, cwd: string, ou
   if (scoped.value.length === 0) return ok({ ...output, changedFiles });
   const reverted = await d.git.revertFiles(scoped.value, cwd); if (!reverted.ok) return reverted;
   const kept = changedFiles.filter(file => !scoped.value.includes(file));
-  console.warn(`Codex writer reverted out-of-scope files: ${scoped.value.join(', ')}`);
+  writeStderr(`Codex writer reverted out-of-scope files: ${scoped.value.join(', ')}`);
   return kept.length === 0 ? err('EMPTY_RESPONSE', `Agent only changed out-of-scope files: ${scoped.value.join(', ')}`) : ok({ ...output, changedFiles: kept });
 }
 const checked = async (d: WriterDeps, task: TaskDefinition, cwd: string, result: Result<WriterOutput>, allowNoop = false) => {

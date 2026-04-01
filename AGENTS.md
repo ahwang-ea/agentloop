@@ -60,7 +60,7 @@ the code has hidden shared state — fix the code, not the test runner.
 - Writer abstraction: writer.ts picks Claude or Codex based on config
 - Scope enforcement: hooks block Claude, orchestrator reverts Codex
 - Progressive verify: tsc → related tests (iteration), full suite + lint (merge)
-- Review: sequential — Codex detail first, then Claude coherence sweep
+- Review: concurrent — Codex detail and Claude coherence sweep run in parallel, with stable output ordering
 - Fixes: always fresh writer session, never the review session
 - Gardening rings: Ring 0-1 code-enforced, Ring 2 code-checked, Ring 3 code-triggered
 

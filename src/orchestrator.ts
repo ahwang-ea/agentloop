@@ -1,6 +1,8 @@
 // orchestrator.ts — Core state machine. Each transition is code, not a prompt.
+import { join } from 'node:path';
 import type { AgentloopConfig, ClaimedActionableTask, ClaudeAdapter, CodexAdapter, CodexWriterAdapter, FinalizationState, GitAdapter, NotifierAdapter, TaskDefinition, TaskQueueAdapter } from './types/index.js';
 import { ok, err, type Result } from './shared/result.js';
+import { tryWithArtifactLock } from './core/artifact-lock.js';
 import { verifyCodexCli } from './core/codex-writer.js';
 import { finalize } from './core/finalizer.js';
 import { findDependencyFailures } from './core/dependency-deadlock.js';
@@ -21,6 +23,7 @@ const MAX_FINALIZE_RETRIES = 3;
 const pending = new Set(['queued', 'writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging', 'finalizing']);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const expired = (deadlineAt?: number) => deadlineAt != null && Date.now() >= deadlineAt;
+const sweepLockPath = (config: AgentloopConfig) => join(config.repoPath, '.agentloop', 'architect-sweep');
 const learn = async (d: Pick<Deps, 'config' | 'claude' | 'notifier'>) => { const r = await refreshLearnings(d.config, d.claude, d.notifier); if (!r.ok) console.error(r.error.message); };
 
 async function notify(d: Deps, taskId: string | undefined, summary: string, details: string,
@@ -52,7 +55,12 @@ async function claim(d: Deps): Promise<Result<ClaimedActionableTask | null>> {
 }
 async function runSweep(d: Deps, shared: SharedState): Promise<Result<void>> {
   if (d.config.sweepInterval <= 0) return ok(undefined);
-  if (!shared.sweep) shared.sweep = (async () => { const result = await architectSweep(d); shared.sweep = undefined; return result; })();
+  if (!shared.sweep) shared.sweep = (async () => {
+    const result = await tryWithArtifactLock(sweepLockPath(d.config), 'architect sweep', async () => architectSweep(d));
+    shared.sweep = undefined;
+    if (!result.ok) console.error(result.error.message);
+    return ok(undefined);
+  })();
   return shared.sweep;
 }
 async function waitForWork(d: Deps, shared: SharedState): Promise<Result<'retry' | 'stop'>> {

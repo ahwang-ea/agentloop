@@ -21,6 +21,7 @@ const deps = (write: (prompt: string) => Promise<ReturnType<typeof ok>>) => ({
   git: { trackedFiles: async () => ok([]), revertFiles: async () => ok(undefined) } as never,
   codexWriter: { write: async (prompt: string) => write(prompt), fix: async (prompt: string) => write(prompt) } as never,
 });
+afterEach(() => { jest.restoreAllMocks(); });
 
 test('retries codex write when first pass changes no files', async () => {
   let calls = 0;
@@ -33,16 +34,14 @@ test('retries codex write when first pass changes no files', async () => {
   expect(calls).toBe(2);
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 test('cleanup allows a no-op codex response', async () => {
   const result = await runWriterCleanup(deps(async () => ok({ text: 'clean', changedFiles: [], tokenEstimate: 1 })) as never, undefined, task, '.');
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(result.value.changedFiles).toEqual([]);
 });
-
 test('reverts new out-of-scope files from codex output', async () => {
-  jest.spyOn(console, 'warn').mockImplementationOnce(() => {});
+  jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   let reverted: string[] = [];
   const result = await startWrite({
     config: { repoPath: '.', useCodexWriter: true },
@@ -61,7 +60,6 @@ test('reverts new out-of-scope files from codex output', async () => {
   expect(reverted).toEqual(['src/__tests__/db.test.ts']);
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 test('initial no-op retry uses codex write, not fix', async () => {
   let attempts = 0;
   const write = jest.fn(async (_prompt: string) => ok({ text: 'done', changedFiles: ['src/db/index.ts'], tokenEstimate: 1 }));

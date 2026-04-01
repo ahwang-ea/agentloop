@@ -1,6 +1,7 @@
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
+import { writeStderr } from '../shared/stderr.js';
 import type { ClaudeAdapter, ScaffoldFile, ScaffoldOutput, TaskDefinition } from '../types/index.js';
 import { extractJson } from './review-output.js';
 import { checkScope } from './scope.js';
@@ -98,7 +99,7 @@ export async function scaffoldTask(
   if (!scaffold.ok) return scaffold;
   const filtered = scaffold.value.files.filter(file => {
     if (inScope(file.path, task)) return true;
-    console.warn(`Scaffold skipped out-of-scope file: ${file.path}`);
+    writeStderr(`Scaffold skipped out-of-scope file: ${file.path}`);
     return false;
   });
   return applyScaffold(cwd, { files: filtered });
