@@ -67,7 +67,8 @@ test('prioritizes deterministic sweep tasks before proposed tasks when the cap i
   });
   expect(result.ok).toBe(true);
   expect(await queue.countByDedupePrefix('sweep:')).toEqual(ok(10));
-  const titles = (JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{ task: { title: string } }>).map(item => item.task.title);
+  const raw = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{ task: { title: string } }> | { version: number; tasks: Array<{ task: { title: string } }> };
+  const titles = (Array.isArray(raw) ? raw : raw.tasks).map(item => item.task.title);
   expect(titles).toContain('Review oversized file tasks.json');
   expect(titles).not.toContain('Duplicate title');
   expect(titles).not.toContain('Would exceed cap');

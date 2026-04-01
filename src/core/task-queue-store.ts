@@ -11,6 +11,7 @@ export type TaskQueueFile = { version?: number; tasks: TaskRecord[] };
 export type TaskClaim = NonNullable<TaskRecord['claim']>;
 export const activeTaskStatuses = new Set(['writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging']);
 const defaultTaskFile = 'tasks.json';
+const defaultTaskQueueVersion = 1;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const withTaskType = (task: TaskDefinition): TaskDefinition => ({ ...task, type: task.type ?? 'implement' });
 const serializeTaskQueue = (queue: TaskQueueFile) =>
@@ -79,7 +80,7 @@ export async function loadTaskQueue(path: string): Promise<Result<TaskQueueFile>
       : err('QUEUE_CORRUPT', parsed.error.message);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' ? ok({ tasks: [] }) : err('TRANSPORT_ERROR', `Cannot read queue ${path}`);
+    return code === 'ENOENT' ? ok({ version: defaultTaskQueueVersion, tasks: [] }) : err('TRANSPORT_ERROR', `Cannot read queue ${path}`);
   }
 }
 

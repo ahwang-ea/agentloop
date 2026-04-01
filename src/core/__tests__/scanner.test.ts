@@ -111,12 +111,12 @@ test('round-trips raw-root inventories through writeInventory and readInventory'
   expect(read.value).toEqual(written.value);
 });
 
-test('falls back from malformed package.json and keeps current pyproject extraction', async () => {
+test('falls back from malformed package.json and extracts pyproject dependency names', async () => {
   const root = await repo();
-  await Promise.all([writeFile(join(root, 'package.json'), '{ nope', 'utf-8'), writeFile(join(root, 'pyproject.toml'), '[tool.poetry.dependencies]\npython = "^3.11"\nrequests = "^2.31"\n\n[project]\ndependencies = [\n  "requests>=2",\n  "pytest>=8",\n  "requests>=2",\n]\n', 'utf-8')]);
+  await Promise.all([writeFile(join(root, 'package.json'), '{ nope', 'utf-8'), writeFile(join(root, 'pyproject.toml'), '[tool.poetry.dependencies]\npython = "^3.11"\nrequests = "^2.31"\n\n[project]\ndependencies = [\n  "requests>=2",\n  "typing-extensions>=4; python_version < "3.13"",\n  "pytest>=8",\n  "requests>=2",\n]\n', 'utf-8')]);
   const inventory = await buildInventory(root, await discoverRepoFiles(root)), pyproject = inventory.dependencies.find(file => file.path === 'pyproject.toml');
   expect(inventory.packages).toEqual([]); expect(inventory.dependencies).toHaveLength(1);
-  expect(pyproject?.dependencies).toEqual(['requests', 'dependencies', 'requests>=2', 'pytest>=8']);
+  expect(pyproject?.dependencies).toEqual(['requests', 'typing-extensions', 'pytest']);
   expect(inventory.tests.frameworks).toEqual(['pytest']);
 });
 

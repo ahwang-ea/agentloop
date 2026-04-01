@@ -3,6 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileTaskQueue } from '../task-queue.js';
 
+type QueueRecord = {
+  status: string;
+  round: number;
+  blocked?: { reason: string };
+  completedAt?: string;
+  convergence?: unknown;
+  claim?: { token: string; expiresAt: string };
+};
+type QueueFile = QueueRecord[] | { version: number; tasks: QueueRecord[] };
+
 const config = (repoPath: string) => ({
   repoPath,
   baseBranch: 'main',
@@ -16,14 +26,10 @@ const config = (repoPath: string) => ({
   taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 1, maxTasksPerSession: 3, maxTokensPerSession: 100000, parallelVerify: true, sweepInterval: 1,
 });
 const taskInput = { title: 'Queue task', description: '', scope: { editableFiles: ['src/a.ts'], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium' as const };
-const readRaw = async (repoPath: string) => JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{
-  status: string;
-  round: number;
-  blocked?: { reason: string };
-  completedAt?: string;
-  convergence?: unknown;
-  claim?: { token: string; expiresAt: string };
-}>;
+const readRawQueue = async (repoPath: string) => {
+  const raw = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as QueueFile;
+  return { raw, records: Array.isArray(raw) ? raw : raw.tasks };
+};
 
 test('requeueBlocked rejects tasks that are not blocked', async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-requeue-'));
@@ -35,7 +41,7 @@ test('requeueBlocked rejects tasks that are not blocked', async () => {
   expect(rejected.ok).toBe(false);
   if (rejected.ok) return;
   expect(rejected.error.code).toBe('CONFIG_ERROR');
-  expect((await readRaw(repoPath))[0]).toMatchObject({ status: 'queued', round: 0 });
+  expect((await readRawQueue(repoPath)).records[0]).toMatchObject({ status: 'queued', round: 0 });
 });
 
 test('requeueBlocked resets blocked task state back to queued', async () => {
@@ -57,7 +63,7 @@ test('requeueBlocked resets blocked task state back to queued', async () => {
   expect(blocked.ok).toBe(true);
   const requeued = await queue.requeueBlocked(task.value.id);
   expect(requeued.ok).toBe(true);
-  const raw = (await readRaw(repoPath))[0];
+  const raw = (await readRawQueue(repoPath)).records[0];
   expect(raw).toMatchObject({ status: 'queued', round: 0 });
   expect(raw.blocked).toBeUndefined();
   expect(raw.completedAt).toBeUndefined();
@@ -85,7 +91,7 @@ for (const [name, run] of [
     expect(rejected.ok).toBe(false);
     if (rejected.ok) return;
     expect(rejected.error.code).toBe('SESSION_ERROR');
-    const raw = (await readRaw(repoPath))[0];
+    const raw = (await readRawQueue(repoPath)).records[0];
     expect(raw.status).toBe('writing');
     expect(raw.claim?.token).toBe(claimed.value.claimToken);
     expect((await queue.renewClaim(task.value.id, claimed.value.claimToken)).ok).toBe(true);
@@ -102,9 +108,9 @@ test('rejects expired claims until the task is reclaimed', async () => {
   const claimed = await queue.claimNextActionable(1);
   expect(claimed.ok && claimed.value?.state.status).toBe('writing');
   if (!claimed.ok || !claimed.value || claimed.value.state.status !== 'writing') return;
-  const raw = await readRaw(repoPath);
-  raw[0].claim = { token: claimed.value.claimToken, expiresAt: '2026-03-31T00:00:00.000Z' };
-  await writeFile(taskFile, JSON.stringify(raw, null, 2));
+  const persisted = await readRawQueue(repoPath);
+  persisted.records[0].claim = { token: claimed.value.claimToken, expiresAt: '2026-03-31T00:00:00.000Z' };
+  await writeFile(taskFile, JSON.stringify(persisted.raw, null, 2));
   const rejected = await queue.updateStatus(task.value.id, 'verifying', claimed.value.claimToken);
   expect(rejected.ok).toBe(false);
   if (rejected.ok) return;
