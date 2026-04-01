@@ -1,38 +1,78 @@
 # AGENTS.md
 
 ## What this project does
-An npm package (agentloop) that orchestrates AI coding agents with enforced quality loops.
-Two commands: `agentloop init` (scaffold a repo) and `agentloop start` (run the orchestrator).
+An npm package (agentloop) that orchestrates AI coding agents with
+enforced quality loops. Operators describe goals, agents build autonomously.
+
+## Commands
+init, start, status, metrics, rescan, approve, plan, benchmark, improve.
 
 ## Stack
-TypeScript 5.x, Node 20+, claude-agent-sdk, openai SDK, git CLI.
+TypeScript 5.x (ESM), Node 20+, claude-agent-sdk, openai SDK, Codex CLI,
+git CLI, @slack/webhook. Zero other runtime dependencies.
+
+## Core principles
+- Axiom 18: if it must happen, it's code. Not a prompt, not prose.
+  Type system > hooks > lint > tests > verify.sh > orchestrator > prompts.
+- Axiom 19: every change to a running system is a migration. Additive-only
+  by default. Breaking changes need versioning or migration functions.
+- Axiom 20: blast radius discovery is a prerequisite. Before changing a
+  shared type or persisted format, trace all consumers and verify compatibility.
 
 ## Conventions
-- All functions return Result<T> for operations that can fail (see src/shared/result.ts)
-- Use ok() and err(code, message) helpers, never throw
-- Error codes are typed — branch on .error.code, not string matching
-- Max 150 lines per file
-- Pure functions, no classes
+- All functions that can fail return Result<T> (see src/shared/result.ts)
+- Use ok() and err(code, message) helpers — never throw
+- ErrorCode is a typed union — branch on .error.code, not string matching
+- Max 150 lines per file. Split if approaching the limit.
+- Pure functions, no classes. Dependencies passed as arguments.
 - One file = one responsibility
+- Write/fix operations return WriterOutput (not SessionOutput)
+- SessionOutput is for Claude-specific session control (chat, review) only
+- Log metrics at ALL terminal paths via shared logTaskMetrics() helper
+- GC, metrics, sweep are best-effort — failures log to stderr, never halt
+- Every .agentloop/ artifact has an owner, lifecycle, and cleanup rule
+- Persisted types carry a version field. Reader code handles all versions.
+- Changes to shared types require checking all importers for compatibility.
+- Additive-only changes to persisted formats by default. Never remove or
+  rename a field without a migration.
 
 ## Patterns to follow
-- Types: domain types in src/types/domain.ts, adapters in src/types/adapters.ts, config in src/types/config.ts
-- Barrel: src/types/index.ts re-exports everything — import from './types/index.js'
-- Result pattern: see src/shared/result.ts (OrchestratorError with typed ErrorCode)
-- For goals and constraints: see ARCHITECTURE.md
+- Types: domain in src/types/domain.ts, adapters in src/types/adapters.ts
+- Barrel: src/types/index.ts re-exports — import from './types/index.js'
+- Task routing: TaskType determines which model writes, not ModelPreference
+- Writer abstraction: writer.ts picks Claude or Codex based on config
+- Scope enforcement: hooks block Claude, orchestrator reverts Codex
+- Progressive verify: tsc → related tests (iteration), full suite + lint (merge)
+- Review: sequential — Codex detail first, then Claude coherence sweep
+- Fixes: always fresh writer session, never the review session
+- Gardening rings: Ring 0-1 code-enforced, Ring 2 code-checked, Ring 3 code-triggered
 
 ## Module structure
-- src/cli.ts — entry point, two commands
-- src/orchestrator.ts — main state machine loop
-- src/types/ — all type definitions (domain.ts, adapters.ts, config.ts, index.ts)
-- src/core/ — business logic (convergence, verifier, reviewer, behavior, sweep)
-- src/shared/ — shared utilities (result.ts)
+- src/cli.ts — CLI entry, command parsing
+- src/orchestrator.ts — state machine: pick → write → verify → review → merge
+- src/types/ — domain.ts, adapters.ts, config.ts
+- src/shared/ — result.ts (Result<T>, ErrorCode, ok/err)
+- src/core/ — business logic:
+    writer.ts, codex-writer.ts, task-runner.ts, research-task.ts,
+    verifier.ts, verify-loop.ts, reviewer.ts, review-loop.ts,
+    scaffold.ts, scope.ts, metrics.ts, metrics-report.ts,
+    learnings.ts, gc.ts, gc-retention.ts, session-budget.ts,
+    sweep.ts, sweep-checks.ts, task-queue.ts, finalizer.ts,
+    notifier.ts, planner.ts, benchmark.ts, improver.ts,
+    init.ts, scanner.ts, smart-init.ts
+- src/benchmarks/ — suite types and definitions
 - templates/ — scaffolding for target repos
 - hooks/ — Python hook scripts for target repos
+- benchmarks/results/ — gitignored benchmark output
 
 ## Do NOT
-- Add dependencies beyond: claude-agent-sdk, openai, @slack/webhook
-- Use classes
-- Throw exceptions
-- Create abstractions or base classes
-- Over-engineer: this is ~1000 lines total, keep it simple
+- Add runtime dependencies beyond the SDKs
+- Use classes or inheritance
+- Throw exceptions (use err())
+- Write to tasks.json directly (use TaskQueueAdapter.add)
+- Put prompt instructions where code enforcement is possible
+- Create stateful artifacts without defining max size + cleanup
+- Swallow errors silently (log to stderr at minimum)
+- Remove or rename fields in persisted types without a migration
+- Change shared interfaces without checking all consumers
+- Add features without tests

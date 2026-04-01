@@ -101,7 +101,7 @@ test('falls back to claude when codex write stays empty', async () => {
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(started).toContain('You changed no files');
-  expect(started).toContain('Do not leave TODO stubs');
+  expect(started).toContain('Do not leave placeholder stubs');
   expect(result.value.session?.id).toBe('claude-1');
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
@@ -128,7 +128,7 @@ test('falls back to claude when codex leaves placeholder stubs', async () => {
   } as never, task, cwd);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
-  expect(started).toContain('Do not leave TODO stubs');
+  expect(started).toContain('Do not leave placeholder stubs');
   expect(result.value.session?.id).toBe('claude-2');
 });
 

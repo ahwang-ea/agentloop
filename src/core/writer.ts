@@ -11,7 +11,7 @@ export interface StartedWrite { session?: ClaudeSession; output: WriterOutput; }
 const invalid = (output: WriterOutput) => output.changedFiles.length === 0;
 const retryNote = 'You changed no files. Create or edit the required files now. Do not stop with only an explanation.';
 const createNote = 'If an editable path is a glob or points to a missing file, create the matching in-scope directories and files now.';
-const fallbackNote = 'Do not leave TODO stubs, placeholder error returns, or empty test files. If you create a test file, include at least one real test.';
+const fallbackNote = 'Do not leave placeholder stubs, placeholder error returns, or empty test files. If you create a test file, include at least one real test.';
 const scratch = (file: string) => /\.bak\d*$|\.tsbuildinfo$/.test(file);
 const testFile = (file: string) => /\.test\.[cm]?[jt]sx?$/.test(file);
 const codeFile = (file: string) => /\.[cm]?[jt]sx?$/.test(file);

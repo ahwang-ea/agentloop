@@ -13,13 +13,13 @@ implements a subset. See PHASE2_HANDOFF.md for tasks that bridge the gap.
 4. Works on any repo that has AGENTS.md + verify.sh. No framework lock-in.
 
 ## Constraints
-- Under 4000 lines total. Each file under 150 lines.
+- Under 2000 lines total. Each file under 150 lines.
 - No classes. Plain functions + types. Match the pattern we enforce on target repos.
 - All operations that can fail return Result<T>. Never throw.
 - Zero runtime dependencies beyond the SDKs (claude-agent-sdk, openai, @slack/webhook).
 - TypeScript strict mode.
 
-## 14 Axioms of AI Agent Coding
+## 20 Axioms of AI Agent Coding
 
 1. Lazy/satisficing — multi-pass needed, never trust a single output
 2. Context quality = output quality — curate minimum correct context
@@ -31,10 +31,16 @@ implements a subset. See PHASE2_HANDOFF.md for tasks that bridge the gap.
 8. Small tasks >> big tasks — 1-3 files max per task
 9. Errors > instructions — pipe compiler/test output directly, not "please fix"
 10. Thrash after extended iterations — escalate, don't spin
-11. Garbage compounds exponentially — mandatory cleanup every task
+11. Maintenance is the product — without a loop to keep things fresh, clean, and correct, every system rots. The gardening loop IS the differentiator. Continuous tending, not end-of-task cleanup.
 12. Frontloading structure eliminates rounds — types + tests first
 13. Three alignment levels — code vs plan, plan vs goals, goals vs human want
 14. IQ degrades non-linearly with context — maximize signal per token, prefer zero-context enforcement (types, tests, hooks) over prompt-based enforcement
+15. Agent-native over agent-accessible — don't just make things agents CAN use; structure everything to maximize the probability agents WILL use it correctly. Type errors > lint rules > prose. Prefer native. Fall back to accessible only when native is impossible.
+16. Graceful degradation — every subsystem defines its failure mode. No single subsystem failure halts the pipeline. If gardening fails, the system works at reduced capacity, not breaks.
+17. Every primitive must scale agent-natively — every stateful artifact needs: max active size, archival trigger, retrieval path, and maintenance owner. If it can't define all four, it's not ready.
+18. If it must happen, it's code — prompt instructions are suggestions the agent may skip (Axiom 1). Critical invariants are code or tests. Hierarchy: type system > hooks > lint > tests > verify.sh > orchestrator > prompt > prose.
+19. Every change to a running system is a migration — agents see code, not history. They don't see the 6 months of state in the old format, the deployed configs, the running processes. No change to persisted state, interfaces, schemas, or configs is "just a refactor." Additive-only by default. Breaking changes require versioning, migration functions, or compatibility windows.
+20. Blast radius discovery is a prerequisite, not an afterthought — before any change to a shared interface or persisted type, the full impact must be traced: who imports it, what reads it, what state exists in the old format. Agents have the capability to trace this but won't unless the system makes it mandatory. Code-enforced via pre-merge inventory cross-reference.
 
 ## Tech Stack
 - TypeScript 5.x, Node 20+
@@ -57,8 +63,9 @@ Type safety notes:
   define a WriterOutput type that both adapters return: text, changedFiles,
   tokenEstimate (0 if unknown from Codex CLI, exact from Claude). No `success`
   field — redundant with Result wrapper. Update all write/fix call sites.
-- TaskType ('research'|'implement'|'integrate'|'debug') is the routing signal.
-  TaskType determines which model writes, not a separate field.
+- TaskType ('research'|'implement'|'integrate'|'debug') replaces ModelPreference
+  as the routing signal. ModelPreference should be removed or demoted to an
+  override hint. TaskType determines which model writes, not a separate field.
 
 ## Model Roles
 
@@ -196,6 +203,53 @@ Quality of guidance affects round count, not correctness of process.
 - Incremental delivery: types first → approve → implement → approve.
 - Intent confirmation: Claude PM summarizes understanding before coding.
 
+## Agent-Native Design
+
+Axiom 15 in practice. Every design decision should answer: "will an
+agent do the right thing here by default, or does it have to be told?"
+
+### The spectrum
+From strongest (agent-native) to weakest (agent-accessible):
+
+1. Type system — branded types, discriminated unions, required fields.
+   Wrong code doesn't compile. Agent can't make the mistake.
+2. Tests as spec — failing test defines the requirement. Agent's goal
+   is making it pass. No interpretation needed.
+3. Hooks — PreToolUse, Stop, SessionStart fire automatically. Agent
+   can't skip them. Zero context cost.
+4. Lint rules — no-unused-vars, no-empty-catch, no-console. Caught on
+   every edit, no prompt needed.
+5. verify.sh — runs on every task completion. Agent gets concrete
+   error output, not instructions.
+6. Golden files — copy + rename + fill in. Agent follows the pattern,
+   not instructions about the pattern.
+7. AGENTS.md — prose rules the agent reads. Better than nothing, but
+   costs context tokens and compliance is probabilistic.
+8. Prompt injection — learnings, cleanup instructions. Weakest. Most
+   likely to be ignored or misinterpreted.
+
+### Design checklist for new features
+When adding a feature to agentloop or a target repo, ask (Axiom 18):
+- Can I make the wrong thing a type error? → Do that. (strongest)
+- Can I make the wrong thing a hook rejection? → Add the hook.
+- Can I make the wrong thing a lint error? → Add the rule.
+- Can I make the wrong thing a test failure? → Write the test first.
+- Can I make the right thing the default? → Set the default.
+- Can I make a code check that auto-creates a task? → Add to sweep-checks.
+- None of the above? → Add it to AGENTS.md, but know it's weak. (weakest)
+
+### Examples in this codebase
+- Result<T> over exceptions: agents can't forget to handle errors
+  because the type forces them to check .ok
+- ScaffoldFile discriminated union: golden-copy has referencePath,
+  others have content. Type-level, not a prose rule.
+- Scope enforcement via hooks: agents can't edit forbidden files
+  because the hook blocks the edit, not because AGENTS.md says don't.
+- Progressive verify: tsc runs first because type errors are cheapest
+  to detect. Structure guides the agent toward fast feedback.
+- Session caps: agents don't decide when to start fresh — the
+  orchestrator forces it. The right thing happens by default.
+
 ## Observability
 
 One file: .agentloop/metrics.jsonl (append-only, one line per task).
@@ -228,52 +282,170 @@ be a lint rule, test helper, or type constraint instead? Code enforcement
 is always preferred over prose. The proposal goes to Slack for human
 approval — never auto-applied. Hard cap: AGENTS.md stays under 100 lines.
 
-## Garbage Leak Prevention
+## Codebase Gardening
 
-Rule: every stateful artifact needs a cap, a TTL, or a cleanup trigger.
-If it doesn't have one of those three, it's a leak. (Axiom 11)
+Gardening is not garbage collection. GC runs at the end to clean up
+waste. Gardening is continuous: pruning, organizing, ensuring every
+artifact is where agents will find it when they need it. The gardening
+loop IS the product (Axiom 11). Without it, every system rots.
 
-### Runtime state garbage collection
-The finalizer runs a GC pass after every successful merge:
-- Delete the task's worktree directory and base worktrees under _base/
-- Delete the merged al/ branch (git branch -d)
-- Prune notification idempotency keys older than 7 days
-- Archive completed/stuck tasks older than 30 days from tasks.json
-- Rotate metrics.jsonl if older than 90 days
-- Prune .agentloop/archive.jsonl entries older than 180 days
-- Prune .agentloop/metrics-archive/ files older than 1 year
-- Prune .agentloop/archive/ (research notes) older than 180 days
-- Force-remove stale .lock directories older than 5 minutes
-- Clean up temp files (tasks.json.*.tmp, notifications.json.tmp)
-- Remove smart-init artifacts (.agentloop/drafts/, init-questions.json,
-  coverage.json) after init completes
-- Evict completed sessions from the in-memory session Map in claude adapter
+The goal isn't a clean repo. The goal is a repo that maximizes agent
+performance on the next task. The structure itself guides agents to
+do the right thing (Axiom 15).
 
-### Stateful artifacts inventory
-All .agentloop/ files that need lifecycle management:
-- current-scope.json — overwritten per task (no leak, but stale after crash)
-- session-status.json — overwritten per session (same)
-- inventory.json — overwritten on init/rescan (bounded, one file)
-- intent-baseline.json — overwritten on intent check (bounded, one file)
-- drafts/ — created during smart init, cleaned after init completes
-- research/*.md — archived when feature merges to main
+### Enforcement hierarchy (Axiom 18)
+If it must happen, it's code. Prompts are for things that tolerate
+occasional failure and self-correct through repetition.
 
-### Session context limits
-Warm sessions are capped: fresh session after 3 tasks or 100k tokens,
-whichever first. Without this, conversation history grows and IQ degrades
-per Axiom 14.
+| Enforcement | Strength | Cost | Example |
+|-------------|----------|------|---------|
+| Type system | Compile error | Zero runtime | Result<T> forces error handling |
+| Hooks | Blocks the action | Zero context | scope-check.py prevents forbidden edits |
+| Lint rules | Fails verify | Zero context | no-unused-vars, no-empty-catch |
+| verify.sh | Fails the task | Seconds | tsc, jest, depcheck, TODO grep |
+| State machine | Skips to next step | None | orchestrator if-statements |
+| Code checks | Creates tasks automatically | Cheap | file size, pattern drift, doc freshness |
+| Prompt injection | Agent may follow | Tokens | learnings addendum, cleanup prompt |
+| AGENTS.md prose | Agent may read | Tokens | conventions, do-nots |
 
-Error output passed to fix prompts is truncated: first 50 lines + last
-10 lines. The first error is usually the root cause. 10,000 lines of
-test output in the prompt tanks reasoning quality.
+Everything above the line (type system through code checks) is
+deterministic. Everything below is probabilistic. Design for the
+line. Push things above it whenever possible.
 
-### Sweep task deduplication
-Architect sweep tasks are deduped by title hash. Max 10 sweep-generated
-tasks in the queue at once. Prevents sweep from proposing the same
-cleanup repeatedly.
+### Concentric gardening rings
 
-### Code garbage (closed-loop rule)
-Anything not in a closed loop is garbage. Enforce via zero-context checks:
+Ring 0, 1, and 2 are code-enforced. Ring 3 is code-triggered but
+prompt-executed. Ring 4 is human-triggered.
+
+**Ring 0 — Every verify pass (seconds, code-enforced)**
+Hooks fire automatically. Agent cannot bypass.
+
+| Check | Enforced by | File |
+|-------|-------------|------|
+| Type errors | tsc --noEmit via verify.sh | hooks → verify.sh |
+| Related tests | jest --findRelatedTests via verify.sh | hooks → verify.sh |
+| Scope violations | scope-check.py PreToolUse hook | hooks/scope-check.py |
+| Naked TODOs without task ID | grep in verify.sh | templates/verify.sh |
+| Lint rules (unused vars, empty catch, console) | eslint via verify.sh | templates/verify.sh |
+
+**Ring 1 — Every commit/merge (minutes, code-enforced)**
+Orchestrator state machine runs these. No prompt, no compliance risk.
+
+| Check | Enforced by | File |
+|-------|-------------|------|
+| Full test suite | progressiveVerify(mergeMode=true) | core/verifier.ts |
+| Depcheck (unused packages) | verify.sh --merge | templates/verify.sh |
+| Commented-out code | grep in verify.sh --merge | templates/verify.sh |
+| Worktree cleanup | gc() in finalizer | core/gc.ts |
+| Branch deletion | gc() in finalizer | core/gc.ts |
+| Stale lock removal | clearStaleLock() | core/stale-lock.ts |
+| Temp file cleanup | gc() in finalizer | core/gc.ts |
+| Metrics logging | logTaskMetrics() at ALL 4 terminal paths | core/metrics.ts |
+| Session eviction | evictTaskSessions() in gc | core/gc.ts |
+| Session budget check | recordWarmSession() caps at 3/100k | core/session-budget.ts |
+| Error truncation | truncateVerifyOutput() before fix prompt | core/verifier.ts |
+
+**Ring 2 — Every feature completion (hours, code-enforced checks)**
+Code-enforced checks that fire on feature merge:
+
+| Check | Enforced by | File |
+|-------|-------------|------|
+| Sequential review (Codex detail → Claude coherence) | runSequentialReviews() | core/reviewer.ts |
+| Architecture update check | needsArchitectureUpdate() | core/inventory-diff.ts |
+| Doc freshness (code changed, docs didn't) | verify.sh doc-freshness check (NEW) | templates/verify.sh |
+| Pattern drift (Result vs try/catch ratio) | sweep-checks.ts ratio check (NEW) | core/sweep-checks.ts |
+| File size enforcement (>150 lines) | sweep-checks.ts size check | core/sweep-checks.ts |
+| Test coverage ratio | sweep-checks.ts ratio check (NEW) | core/sweep-checks.ts |
+| Learnings refresh | refreshLearnings() after terminal states | core/learnings.ts |
+
+NEW code-enforced checks to add to Ring 2:
+
+Doc freshness: in verify.sh merge mode, check git diff --name-only
+between the merge base and HEAD. If any .ts file in src/ changed but
+ARCHITECTURE.md and AGENTS.md did not, print a warning (not a hard
+fail — some tasks legitimately don't affect docs). The sweep picks
+up repeated warnings and creates an alignment task.
+
+Pattern drift: in sweep-checks.ts, count occurrences of Result<
+vs try/catch in the codebase. If the ratio drops below 80% Result,
+create a migration sweep task. Pure code, no LLM.
+
+Test coverage ratio: in sweep-checks.ts, count .test.ts files vs
+.ts source files. If ratio drops below 0.3, create a sweep task to
+add tests. Pure code.
+
+**Ring 3 — Every N tasks / periodic (code-triggered, prompt-executed)**
+Code triggers these at deterministic intervals. Claude/Codex execute
+the judgment calls. Self-correcting through repetition (Axiom 18).
+
+| Check | Trigger | Executor | File |
+|-------|---------|----------|------|
+| Architectural sweep | Every sweepInterval tasks (code counter) | Claude proposes, code enqueues | core/sweep.ts |
+| AGENTS.md evolution | Every 20 tasks (metrics line count % 20) | Claude proposes, human approves | core/learnings.ts |
+| Archive pruning | Every gc() pass (deterministic TTLs) | Pure code | core/gc-retention.ts |
+| Full re-inventory | Every rescan command | Scanner (code) + Claude (analysis) | core/rescan.ts |
+
+Even in Ring 3, the triggers are code. Claude only does the parts
+that require judgment: "what sweep task to create" and "what AGENTS.md
+rule to propose." The when and whether are never Claude's decision.
+
+**Ring 4 — Operator-triggered (human judgment)**
+Intentionally human. These are judgment calls, not automatable checks.
+
+| Action | Trigger | Interface |
+|--------|---------|-----------|
+| "Still aligned?" intent check | Slack ping after feature completion | /approve slash command |
+| Approve AGENTS.md proposals | Notification after Ring 3 proposes | /review-agents-update |
+| Review benchmark trends | Operator runs agentloop improve | CLI |
+| Approve research output | Notification after research blocks | /approve slash command |
+| Full re-inventory review | Operator runs agentloop rescan | CLI |
+
+### Scaling every primitive (Axiom 17)
+Every .agentloop/ artifact must define all four columns or it's not ready.
+
+| Artifact | Max active size | Archival trigger | Retrieval path | Owner |
+|----------|----------------|------------------|----------------|-------|
+| tasks.json | Unbounded (active tasks) | Done/stuck tasks archived at 30d | queue.list() | task-queue.ts |
+| metrics.jsonl | Unbounded (append-only) | Rotated at 90d | metricsPath() | metrics.ts |
+| learnings.json | 10 entries | Least-used pruned on update | learningsAddendum() | learnings.ts |
+| notifications.json | Unbounded (append-only) | Keys pruned at 7d | notifier.ts | notifier.ts |
+| archive.jsonl | Unbounded | Entries pruned at 180d | Not queried (cold storage) | gc-retention.ts |
+| metrics-archive/ | Unbounded (files) | Files pruned at 1yr | Not queried (cold storage) | gc-retention.ts |
+| archive/ | Unbounded (files) | Files pruned at 180d | Not queried (cold storage) | gc-retention.ts |
+| inventory.json | One file | Overwritten on rescan | scanner.ts | scanner.ts |
+| current-scope.json | One file | Overwritten per task | hooks/scope-check.py | orchestrator |
+| research/*.md | Per-feature | Archived on feature merge | Not queried after archive | gc.ts |
+
+### Degradation modes (Axiom 16)
+Every gardening subsystem defines what happens when it fails.
+
+| Subsystem | If it fails | Impact | Recovery |
+|-----------|-------------|--------|----------|
+| gc() | Stale worktrees/branches accumulate | Disk usage grows | Next gc() cleans up |
+| logTaskMetrics() | Missing metrics entries | /metrics underreports | Next task logs normally |
+| refreshLearnings() | Stale learnings injected | Slightly worse prompts | Next refresh corrects |
+| sweep | Drift goes undetected longer | Code quality drifts | Next sweep catches up |
+| truncateVerifyOutput() | Full output in prompt | IQ degrades for one fix | Next task starts clean |
+| session eviction | Stale sessions in memory | Memory grows | Process restart clears |
+
+No subsystem failure halts the pipeline. gc() is best-effort.
+Metrics logging failures are logged to stderr but don't fail the task.
+Sweep errors don't stop the orchestrator. The system works at reduced
+capacity, never stops.
+
+### Context gardening
+The agent's context window is a garden too. Weeds are:
+- Stale error output from 5 rounds ago (truncate to 50+10 lines)
+- Warm sessions that have drifted (cap at 3 tasks or 100k tokens)
+- Learnings that don't apply to this task (inject only 2-3 relevant ones)
+- Full ARCHITECTURE.md in an implementation task (only load for planning)
+
+Every token in the prompt either helps or hurts. There's no neutral.
+Gardening the context means loading the minimum that hits the IQ peak
+for each task type (see Context-IQ Tradeoff above).
+
+### Code gardening (closed-loop rule)
+Anything not in a closed loop is a weed. Enforce via zero-context checks:
 
 Lint rules (per-edit, zero context cost):
 - no-unused-vars, no-unused-imports (dead code)
@@ -290,12 +462,75 @@ Cleanup pass enforcement:
 - Orchestrator cleanup prompt: "Remove dead code, unused imports, debug
   statements. Do not add functionality. Only subtract."
 
-Sweep catches pattern drift:
-- "12 files use Result, 3 use try/catch" → creates migration task
-- "ARCHITECTURE.md says X, code does Y" → creates alignment task
+### Sweep as gardening
+Sweep walks the repo and proposes tasks for things that have drifted.
+Deduped by title hash, max 10 in queue. It's the automated gardener.
+
+Code-enforced sweep checks (deterministic, no LLM):
+- File size: any file >150 lines → create split task
+- Pattern drift: Result< vs try/catch ratio <80% → migration task
+- Test ratio: test files / source files <0.3 → coverage task
+- Doc freshness: repeated merge-mode warnings → alignment task
+
+LLM-assisted sweep checks (Ring 3, prompt-executed):
+- Undocumented modules → AGENTS.md task
+- Undocumented env vars → docs task
+- Architectural mismatch → alignment task
 
 The principle: if a human wouldn't accept "I'll fix it later" in code
-review, the toolchain shouldn't either. Enforce in lint, not in prompts.
+review, the toolchain shouldn't either. If the check is deterministic,
+enforce it in code. If it requires judgment, trigger it in code and
+let the LLM execute it.
+
+## Change Safety (Axioms 19, 20)
+
+Agents see the code as it is NOW. They don't see the state that has
+accumulated over time — old experiment records, deployed configs,
+running processes, downstream consumers. When an agent "improves" a
+data format, renames a field, or restructures a config, everything
+in the old format breaks silently.
+
+### Migration hierarchy (strongest to weakest)
+1. Additive-only — add fields with defaults, never remove/rename. DEFAULT.
+2. Versioned schemas — records carry version, reader handles all known versions.
+3. Migration functions — deterministic old→new transform, idempotent, tested.
+4. Compatibility windows — old+new supported for N days, explicit deprecation.
+5. Flag-gated rollout — new behavior behind a flag, old is default.
+6. "Just change it" — what agents do by default. Structurally prevent this.
+
+### Pre-merge blast radius review
+Before any merge to main that touches a shared type, persisted format,
+config schema, or adapter interface:
+
+1. Auto-generate a systems inventory (code, not LLM): which types exist,
+   who imports them, what reads/writes each persisted format, what configs
+   are loaded where. AST analysis + file system scan.
+2. Cross-reference the diff against the inventory: for each changed file,
+   find every consumer, reader, writer, implementer.
+3. Generate a checklist: HIGH risk (type/interface changed, all consumers
+   listed), MEDIUM risk (write-side changed, readers listed), LOW risk
+   (read-side changed, format unchanged).
+4. Review agent or operator addresses each item before merge is allowed.
+5. The reviewer is NOT the same agent that made the change (Axiom 4).
+
+This can be CI-enforced (merge blocked without sign-off), process-enforced
+(checklist posted to Slack/PR), or minimum-viable (printed to stdout).
+
+### Agent-specific failure modes
+- Agents don't read git history — they see current code, not accumulated state
+- Agents optimize for clean code, not compatibility — they rename fields freely
+- Agents don't know deployment topology — they don't know configs are deployed
+- Agents take shortcuts — if they can skip impact analysis, they will
+- Prevention must be code (CI, hooks, lint), not documentation
+
+### Schema safety rules
+- Persisted types must have a version field. Reader code handles all versions.
+- Removing or renaming a field in a persisted type is a lint error without
+  a corresponding migration file.
+- Config files are validated by schema on load. Missing fields get defaults,
+  not silent nulls.
+- Contract tests load real old data with current code. If parsing fails,
+  the change is incompatible.
 
 ## Feature Lifecycle
 
@@ -374,7 +609,16 @@ Future: verify.sh should check doc freshness — behavior change without doc upd
 | 2026-03-29 | Metrics-driven optimization | Build /metrics first. Only build speed optimizations the numbers justify. |
 | 2026-03-29 | Learnings as code, not prose | Lint rules/test helpers/branded types over AGENTS.md additions. Zero context cost. |
 | 2026-03-29 | al/ branch prefix + worktrees | Conductor coexistence. Different directories, no conflicts. |
-| 2026-03-30 | Every stateful artifact: cap, TTL, or cleanup trigger | Axiom 11 applied to orchestrator. GC pass in finalizer after every merge. |
+| 2026-03-30 | Codebase gardening, not just GC | Axiom 11: continuous tending — prune, organize, label, ensure findability. Every artifact has owner + lifecycle. |
+| 2026-03-30 | Agent-native over agent-accessible | Axiom 15: prefer type errors over prose rules, hooks over prompts, structure over instructions. |
+| 2026-03-30 | Concentric gardening rings | Ring 0-2 code-enforced, Ring 3 code-triggered/prompt-executed, Ring 4 human. Push checks to inner rings. |
+| 2026-03-30 | Graceful degradation | Axiom 16: no subsystem failure halts the pipeline. gc/metrics/sweep all best-effort. |
+| 2026-03-30 | Scalable primitives | Axiom 17: every artifact has max size, archival trigger, retrieval path, owner. |
+| 2026-03-30 | If it must happen, it's code | Axiom 18: type system > hooks > lint > tests > verify.sh > orchestrator > prompt > prose. |
+| 2026-03-30 | Doc freshness as code check | verify.sh merge mode: warn if .ts changed but ARCHITECTURE.md didn't. Sweep creates task on repeated warnings. |
+| 2026-03-30 | Pattern drift as code check | sweep-checks.ts: Result vs try/catch ratio, test coverage ratio, file size. Deterministic, no LLM. |
+| 2026-03-30 | Every change is a migration | Axiom 19: additive-only by default. Breaking changes need versioning or migration. Agents see code, not history. |
+| 2026-03-30 | Pre-merge blast radius review | Axiom 20: auto-generated inventory + diff cross-reference. Reviewer is not the change author. |
 | 2026-03-30 | Closed-loop rule for code | No naked TODOs (must have task ID). No empty catches. No dead code. Enforce in lint. |
 | 2026-03-30 | Session cap: 3 tasks or 100k tokens | Warm sessions degrade IQ per Axiom 14. Fresh session prevents context garbage. |
 | 2026-03-30 | Error output truncation: 50+10 lines | Full test output tanks reasoning. First error is root cause. Truncate the rest. |
