@@ -16,10 +16,10 @@ function parsePaths(diff: string): string[] {
     .map(line => line.replace(/^[A-Z?]{1,2}\s+/, '').replace(/^[ab]\//, '')));
 }
 
-const ignoredPatterns = [/\.tsbuildinfo$/, /\.bak\d*$/, /^tsconfig(\..+)?\.json$/, /^package\.json$/, /^\.gitignore$/];
-const isIgnored = (file: string) => ignoredPatterns.some(pattern => pattern.test(file));
+const scratchPatterns = [/\.tsbuildinfo$/, /\.bak\d*$/];
+const isScratch = (file: string) => scratchPatterns.some(pattern => pattern.test(file));
 
 export function checkScope(diff: string, scope: TaskScope): Result<string[]> {
   const files = parsePaths(diff);
-  return ok(files.filter(file => !isIgnored(file) && (matches(file, scope.forbiddenFiles) || !matches(file, scope.editableFiles))));
+  return ok(files.filter(file => !isScratch(file) && (matches(file, scope.forbiddenFiles) || !matches(file, scope.editableFiles))));
 }

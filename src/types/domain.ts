@@ -97,8 +97,12 @@ export interface TaskMetricsStats {
   errors: string[];
   files: string[];
   timestamp: string;
+  taskType?: TaskType;
+  tokenTotal?: number;
+  verifyTimeSec?: number;
 }
 export interface MetricsRecord extends TaskMetricsStats {
+  version?: 2;
   task_id: string;
   task: string;
   outcome: MetricsOutcome;
@@ -110,6 +114,7 @@ export interface InventoryPackage { name: string; path: string; }
 export interface InventoryDoc { path: string; modifiedAt: string; }
 export interface InventoryDependencyFile { path: string; kind: 'package.json' | 'pyproject.toml'; dependencies: string[]; }
 export interface RepoInventory {
+  version?: 1;
   scannedAt: string;
   files: InventoryFile[];
   monorepo: boolean;

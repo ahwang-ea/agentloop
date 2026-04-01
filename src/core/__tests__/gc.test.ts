@@ -47,8 +47,30 @@ test('archives old done and stuck tasks', async () => {
   ], null, 2));
   const result = await archiveOldTasks(config(repoPath), Date.parse('2026-03-30T00:00:00.000Z'));
   expect(result.ok).toBe(true);
-  expect(JSON.parse(await readFile(tasks, 'utf-8')).map((item: { task: { id: string } }) => item.task.id)).toEqual(['c']);
+  const raw = JSON.parse(await readFile(tasks, 'utf-8')) as Array<{ task: { id: string } }>;
+  expect(Array.isArray(raw)).toBe(true);
+  expect(raw.map(item => item.task.id)).toEqual(['c']);
   expect((await readFile(join(repoPath, '.agentloop', 'archive.jsonl'), 'utf-8')).trim().split('\n')).toHaveLength(2);
+});
+
+test('archives old done and stuck tasks from wrapped queues', async () => {
+  const repoPath = await repo(), tasks = join(repoPath, 'tasks.json');
+  await writeFile(tasks, JSON.stringify({
+    version: 1,
+    tasks: [
+      { task: { ...task, id: 'a' }, status: 'done', round: 0, startedAt: '', completedAt: '2025-01-01T00:00:00.000Z', claim: { token: 'tok-a', expiresAt: '2026-04-01T00:00:00.000Z' } },
+      { task: { ...task, id: 'b' }, status: 'stuck', round: 0, startedAt: '', completedAt: '2025-01-01T00:00:00.000Z', dedupeKey: 'sweep:b' },
+      { task: { ...task, id: 'c' }, status: 'blocked', round: 0, startedAt: '', completedAt: '2025-01-01T00:00:00.000Z' },
+      { task: { ...task, id: 'd' }, status: 'done', round: 0, startedAt: '', completedAt: '2026-03-25T00:00:00.000Z' },
+    ],
+  }, null, 2));
+  const result = await archiveOldTasks(config(repoPath), Date.parse('2026-03-30T00:00:00.000Z'));
+  expect(result.ok).toBe(true);
+  const raw = JSON.parse(await readFile(tasks, 'utf-8')) as { version: number; tasks: Array<{ task: { id: string } }> };
+  expect(raw.version).toBe(1);
+  expect(raw.tasks.map(item => item.task.id)).toEqual(['c', 'd']);
+  const archived = (await readFile(join(repoPath, '.agentloop', 'archive.jsonl'), 'utf-8')).trim().split('\n').map(line => JSON.parse(line) as { task: { task: { id: string } } });
+  expect(archived.map(item => item.task.task.id)).toEqual(['a', 'b']);
 });
 
 test('rotates stale metrics logs during gc', async () => {

@@ -28,6 +28,33 @@ await jest.unstable_mockModule('../benchmark-acceptance.js', () => ({ runAccepta
 await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecords }));
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
+beforeEach(() => {
+  jest.spyOn(process.stderr, 'write').mockReturnValue(true);
+  bootstrapBenchmarkRepo.mockReset();
+  createDeps.mockReset();
+  generatePlan.mockReset();
+  enqueuePlan.mockReset();
+  runOrchestrator.mockReset();
+  runAcceptanceTests.mockReset();
+  readMetricsRecords.mockReset();
+  bootstrapBenchmarkRepo.mockResolvedValue(ok('/tmp/agentloop-benchmark-runner'));
+  createDeps.mockResolvedValue(ok({ queue: { list: async () => ok([
+    { task: { id: 't1', title: 'Done', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' }, status: 'done', round: 1, startedAt: '' },
+    { task: { id: 't2', title: 'Queued', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' }, status: 'queued', round: 0, startedAt: '' },
+  ]) } } as never));
+  generatePlan.mockResolvedValue(ok([]));
+  enqueuePlan.mockResolvedValue(ok([]));
+  runOrchestrator.mockResolvedValue(err('BUDGET_EXCEEDED', 'timed out'));
+  runAcceptanceTests.mockResolvedValue(ok([{ name: 'compiles', passed: true }]));
+  readMetricsRecords.mockResolvedValue(ok([
+    { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },
+  ]));
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 const entry: BenchmarkCatalogEntry = {
   id: 'crm',
   fileStem: 'crm',
@@ -60,13 +87,16 @@ test('penalizes score when orchestrator fails after acceptance checks pass', asy
   const result = await runBenchmarkSuite(entry, config);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
+  expect(result.value.version).toBe(2);
   expect(result.value.acceptanceTests).toEqual([
     { name: 'compiles', passed: true },
     { name: 'orchestrator', passed: false, output: 'timed out' },
   ]);
+  expect(result.value.firstPass).toEqual({ definition: 'terminal task metrics with outcome="merged" and rounds === 1', successes: 1, consideredTasks: 1 });
   expect(result.value.tasksCompleted).toBe(1);
   expect(result.value.tasksTotal).toBe(2);
   expect(result.value.score).toBe(0.25);
+  expect(result.value.runMetadata).toEqual(expect.objectContaining({ mode: 'benchmark-fast-path', depcheckSkipped: true, reviewEnabled: false, sweepEnabled: false, useCodexWriter: true, models: { claude: 'claude', codex: 'codex' }, runtime: expect.objectContaining({ node: expect.any(String), platform: process.platform, arch: process.arch }) }));
   expect(createDeps).toHaveBeenCalledWith(expect.objectContaining({
     verifyCommand: 'AGENTLOOP_SKIP_DEPCHECK=1 ./verify.sh',
     integrationTestCommand: 'npm test -- --maxWorkers=100%',
@@ -88,11 +118,13 @@ test('falls back to enqueued task counts when queue listing is empty', async () 
   ] as never));
   readMetricsRecords.mockResolvedValueOnce(ok([
     { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },
-    { task_id: 't2', task: 'Stuck', rounds: 5, timeSec: 60, reviewFindings: 0, outcome: 'stuck', errors: ['same_error'], files: [], timestamp: '2026-03-30T00:01:00.000Z' },
+    { task_id: 't2', task: 'Stuck', rounds: 0, timeSec: 60, reviewFindings: 0, outcome: 'stuck', errors: ['same_error'], files: [], timestamp: '2026-03-30T00:01:00.000Z' },
   ] as never));
   const result = await runBenchmarkSuite(entry, config);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
+  expect(result.value.firstPassRate).toBe(50);
+  expect(result.value.firstPass).toEqual({ definition: 'terminal task metrics with outcome="merged" and rounds === 1', successes: 1, consideredTasks: 2 });
   expect(result.value.tasksTotal).toBe(2);
   expect(result.value.tasksCompleted).toBe(1);
   expect(result.value.tasksStuck).toBe(1);
@@ -100,7 +132,6 @@ test('falls back to enqueued task counts when queue listing is empty', async () 
 
 
 test('retries transient planner failures before giving up', async () => {
-  generatePlan.mockReset();
   generatePlan
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: Repeated 529 Overloaded errors'))
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: 500 internal server error'))

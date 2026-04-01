@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { err, ok, type Result } from '../shared/result.js';
 import type { BenchmarkCatalogEntry } from '../benchmarks/types.js';
 import { scaffoldRepo } from './init.js';
+import { runBenchmarkRepoSmokeTest } from './preflight.js';
 
 const exec = promisify(execFile), npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const pkg = (name: string) => JSON.stringify({
@@ -58,6 +59,7 @@ export async function bootstrapBenchmarkRepo(entry: BenchmarkCatalogEntry): Prom
     const runtimeInstalled = runtimeDeps.length === 0 ? ok(undefined) : await run(npm, ['install', ...runtimeDeps], repoPath); if (!runtimeInstalled.ok) return runtimeInstalled;
     const devInstalled = await run(npm, ['install', '-D', ...devDeps], repoPath); if (!devInstalled.ok) return devInstalled;
     const scaffolded = await scaffoldRepo(repoPath, { smartInit: false }); if (!scaffolded.ok) return scaffolded;
+    const smokeReady = await runBenchmarkRepoSmokeTest(repoPath); if (!smokeReady.ok) return smokeReady;
     const architecture = await appendArchitecture(repoPath, entry.suite.architectureNotes); if (!architecture.ok) return architecture;
     for (const args of [['init', '-b', 'main'], ['config', 'user.email', 'benchmark@agentloop.local'], ['config', 'user.name', 'agentloop benchmark'], ['add', '.'], ['commit', '-m', 'bootstrap benchmark']]) {
       const git = await run('git', args, repoPath); if (!git.ok) return git;

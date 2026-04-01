@@ -18,7 +18,7 @@ test('buildFixPrompt keeps task scope, examples, and non-empty file guidance', (
   expect(prompt).toContain('Concrete in-scope files to create or edit if missing: src/types/index.ts');
   expect(prompt).toContain('Useful in-repo examples to mirror when helpful: src/types/entities.ts');
   expect(prompt).toContain('Do not create empty source files');
-  expect(prompt).toContain('Do not leave TODO stubs');
+  expect(prompt).toContain('Do not leave placeholder stubs');
   expect(prompt).toContain('Additional fix context:');
   expect(prompt).toContain('Fix the failing tests.');
 });

@@ -1,4 +1,4 @@
-// core/reviewer.ts — Sequential Codex + Opus reviews, conflict resolution.
+// core/reviewer.ts — Concurrent Codex + Opus reviews, conflict resolution.
 
 import { readFile } from 'node:fs/promises';
 import { ok, err, type Result } from '../shared/result.js';
@@ -35,10 +35,12 @@ export async function runSequentialReviews(
   try { agentsMd = await readFile(deps.config.agentsMdPath, 'utf-8'); }
   catch { return err('TRANSPORT_ERROR', `Cannot read ${deps.config.agentsMdPath} — required for review`); }
   const base: Omit<ReviewRequest, 'role'> = { diff, taskDefinition: task, architectureMd: arch.value || undefined, agentsMd };
-  const detail = await deps.codex.review({ ...base, role: 'codex-detail' });
+  const [detail, sweep] = await Promise.all([
+    deps.codex.review({ ...base, role: 'codex-detail' }),
+    deps.claude.review({ ...base, role: 'opus-bigpicture' }),
+  ]);
   if (!detail.ok) return err(detail.error.code, `Review failed: ${detail.error.message}`);
   if (!detail.value.rawOutput.trim()) return err('EMPTY_RESPONSE', `Review adapter returned blank output for ${detail.value.reviewer}`);
-  const sweep = await deps.claude.review({ ...base, role: 'opus-bigpicture' });
   if (!sweep.ok) return err(sweep.error.code, `Review failed: ${sweep.error.message}`);
   if (!sweep.value.rawOutput.trim()) return err('EMPTY_RESPONSE', `Review adapter returned blank output for ${sweep.value.reviewer}`);
   return ok([detail.value, sweep.value]);

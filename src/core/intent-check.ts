@@ -3,19 +3,21 @@ import { join } from 'node:path';
 import { ok, err, type Result } from '../shared/result.js';
 import type { AgentloopConfig, GitAdapter, NotifierAdapter, RepoInventory } from '../types/index.js';
 import { diffInventories, formatIntentSummary } from './inventory-diff.js';
+import { parseInventory } from './inventory-parse.js';
 import { scanRepo } from './scanner.js';
 
 const baselinePath = (repoPath: string) => join(repoPath, '.agentloop', 'intent-baseline.json');
 
 async function readBaseline(repoPath: string): Promise<Result<RepoInventory | undefined>> {
-  try { return ok(JSON.parse(await readFile(baselinePath(repoPath), 'utf-8')) as RepoInventory); }
+  const path = baselinePath(repoPath);
+  try { return parseInventory(await readFile(path, 'utf-8'), path); }
   catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return ok(undefined);
-    return err('TRANSPORT_ERROR', `Cannot read ${baselinePath(repoPath)}`);
+    return err('TRANSPORT_ERROR', `Cannot read ${path}`);
   }
 }
 async function writeBaseline(repoPath: string, inventory: RepoInventory): Promise<Result<void>> {
-  try { await mkdir(join(repoPath, '.agentloop'), { recursive: true }); await writeFile(baselinePath(repoPath), JSON.stringify(inventory, null, 2), 'utf-8'); return ok(undefined); }
+  try { await mkdir(join(repoPath, '.agentloop'), { recursive: true }); await writeFile(baselinePath(repoPath), JSON.stringify({ ...inventory, version: inventory.version ?? 1 }, null, 2), 'utf-8'); return ok(undefined); }
   catch { return err('TRANSPORT_ERROR', `Cannot write ${baselinePath(repoPath)}`); }
 }
 

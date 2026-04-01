@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { jest } from '@jest/globals';
 import { ok } from '../../shared/result.js';
 import { architectSweep } from '../sweep.js';
 import { createFileTaskQueue } from '../task-queue.js';
@@ -34,7 +35,7 @@ const task = (title: string) => ({
   priority: 'low' as const,
 });
 
-test('dedupes proposed sweep titles and caps live sweep tasks at ten', async () => {
+test('prioritizes deterministic sweep tasks before proposed tasks when the cap is nearly full', async () => {
   const repoPath = await repo();
   await mkdir(join(repoPath, '.agentloop'), { recursive: true });
   await writeFile(join(repoPath, 'AGENTS.md'), '# AGENTS\n', 'utf-8');
@@ -46,20 +47,31 @@ test('dedupes proposed sweep titles and caps live sweep tasks at ten', async () 
     expect(added.ok).toBe(true);
   }
   const sent: Array<{ summary: string; details: string }> = [];
+  const claude = {
+    chat: jest.fn(async () => ok({
+      text: JSON.stringify([
+        { title: 'Duplicate title', description: 'first', editableFiles: ['src/a.ts'] },
+        { title: 'Duplicate title', description: 'second', editableFiles: ['src/b.ts'] },
+        { title: 'Would exceed cap', description: 'third', editableFiles: ['src/c.ts'] },
+      ]),
+      tokensDelta: 0,
+      changedFiles: [],
+      stopReason: 'end_turn' as const,
+    })),
+  };
   const result = await architectSweep({
     config: config(repoPath),
     queue,
     notifier: { send: async notification => { sent.push({ summary: notification.summary, details: notification.details }); return ok(undefined); } },
-    claude: { chat: async () => ok({ text: JSON.stringify([
-      { title: 'Duplicate title', description: 'first', editableFiles: ['src/a.ts'] },
-      { title: 'Duplicate title', description: 'second', editableFiles: ['src/b.ts'] },
-      { title: 'Would exceed cap', description: 'third', editableFiles: ['src/c.ts'] },
-    ]), tokensDelta: 0, changedFiles: [], stopReason: 'end_turn' }) } as never,
+    claude: claude as never,
   });
   expect(result.ok).toBe(true);
   expect(await queue.countByDedupePrefix('sweep:')).toEqual(ok(10));
-  const tasks = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{ task: { title: string } }>;
-  expect(tasks.map(item => item.task.title)).toContain('Duplicate title');
-  expect(tasks.map(item => item.task.title)).not.toContain('Would exceed cap');
-  expect(sent[0]).toEqual({ summary: 'Architect sweep: 1 tasks queued', details: 'Duplicate title' });
+  const raw = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{ task: { title: string } }> | { version: number; tasks: Array<{ task: { title: string } }> };
+  const titles = (Array.isArray(raw) ? raw : raw.tasks).map(item => item.task.title);
+  expect(titles).toContain('Review oversized file tasks.json');
+  expect(titles).not.toContain('Duplicate title');
+  expect(titles).not.toContain('Would exceed cap');
+  expect(claude.chat).not.toHaveBeenCalled();
+  expect(sent[0]).toEqual({ summary: 'Architect sweep: 1 tasks queued', details: 'Review oversized file tasks.json' });
 });

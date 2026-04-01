@@ -10,7 +10,7 @@ import { createFileTaskQueue } from '../task-queue.js';
 import { buildCleanupPrompt } from '../writer-prompt.js';
 import { worktreePathForBranch } from '../worktree.js';
 const exec = promisify(execFile);
-type Mode = 'happy' | 'stuck' | 'debug';
+type Mode = 'happy' | 'happy-no-codex' | 'stuck' | 'debug';
 interface Scenario { result: Awaited<ReturnType<typeof runOrchestrator>>; tasks: TaskState[]; metrics: string; events: string[]; }
 const text = (e: unknown) => e instanceof Error ? e.message : String(e);
 const wrap = async <T>(label: string, work: () => Promise<T>): Promise<Result<T>> => {
@@ -30,19 +30,20 @@ const config = (repoPath: string): AgentloopConfig => ({
   repoPath, baseBranch: 'main', branchPrefix: 'al/', worktreeRoot: join(repoPath, '.worktrees'), verifyCommand: './verify.sh',
   agentsMdPath: join(repoPath, 'AGENTS.md'), architectureMdPath: join(repoPath, 'ARCHITECTURE.md'), claudeModel: 'claude', codexModel: 'codex',
   codexEnabled: true, useCodexWriter: true, convergence: { maxWallClock: 30, maxTokens: 100, stuckThreshold: 2, thrashOverlapRatio: 0.5 },
-  taskSource: 'file', taskFilePath: join(repoPath, 'tasks.json'), maxParallelAgents: 1, maxTasksPerSession: 3, maxTokensPerSession: 1000, parallelVerify: true, sweepInterval: 99,
+  taskSource: 'file', taskFilePath: join(repoPath, 'tasks.json'), maxParallelAgents: 1, maxTasksPerSession: 3, maxTokensPerSession: 1000, parallelVerify: true, sweepInterval: 0,
 });
 const task = (mode: Mode): TaskInput => ({
   title: `${mode} path`, description: 'Add greet implementation', type: mode === 'debug' ? 'debug' : 'implement',
   scope: { editableFiles: ['src/greet.ts'], readOnlyContext: ['ARCHITECTURE.md'], forbiddenFiles: [] }, acceptanceCriteria: ['add greet function'], priority: 'medium',
 });
-async function initRepo(repoPath: string): Promise<Result<void>> {
+async function initRepo(repoPath: string, withCodexCli: boolean): Promise<Result<void>> {
   return wrap('init repo', async () => {
     await mkdir(repoPath, { recursive: true });
     await writeFile(join(repoPath, 'AGENTS.md'), '# AGENTS\n', 'utf-8');
     await writeFile(join(repoPath, 'ARCHITECTURE.md'), '# ARCHITECTURE\n- Under 4000 lines total.\n', 'utf-8');
     await writeFile(join(repoPath, 'package.json'), JSON.stringify({ name: 'e2e-repo' }), 'utf-8');
     await exec('git', ['init', '-b', 'main'], { cwd: repoPath });
+    if (!withCodexCli) return;
     const bin = join(repoPath, 'bin');
     await mkdir(bin, { recursive: true });
     await writeFile(join(bin, 'codex'), '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo codex 0.0.0\n', 'utf-8');
@@ -61,10 +62,10 @@ async function initWorktree(cfg: AgentloopConfig, repoPath: string, branch: stri
 export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
   const temp = await wrap('mkdtemp', async () => mkdtemp(join(tmpdir(), 'agentloop-e2e-')));
   if (!temp.ok) return temp;
-  const repoPath = temp.value, cfg = config(temp.value), paths = new Map<string, string>(), prevPath = process.env.PATH;
-  process.env.PATH = `${join(repoPath, 'bin')}:${prevPath ?? ''}`;
+  const repoPath = temp.value, cfg = config(temp.value), paths = new Map<string, string>(), prevPath = process.env.PATH, noCodex = mode === 'happy-no-codex';
+  process.env.PATH = noCodex ? '/bin:/usr/bin:/usr/sbin:/sbin' : `${join(repoPath, 'bin')}:/bin:/usr/bin:/usr/sbin:/sbin`;
   try {
-    const seeded = await initRepo(repoPath); if (!seeded.ok) return seeded;
+    const seeded = await initRepo(repoPath, !noCodex); if (!seeded.ok) return seeded;
     const queue = createFileTaskQueue(cfg), added = await queue.add(task(mode)); if (!added.ok) return added;
     const diff = async () => {
       const cwd = [...paths.values()][0];
@@ -81,8 +82,15 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
         return request.diff.includes('src/greet.ts') && !!request.architectureMd ? ok({ reviewer: request.role, findings: [], duration: 0, rawOutput: 'clean' }) : err('CONFIG_ERROR', 'expected diff + architecture');
       } },
       claude: {
-        startSession: async () => ok({ id: 's', taskId: 't' }), waitForStop: async () => ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }),
-        fix: async () => ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }), cleanup: async () => ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }),
+        startSession: async () => ok({ id: 's', taskId: 't' }),
+        waitForStop: async () => !noCodex ? ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }) : wrap('claude write', async () => {
+          const cwd = [...paths.values()][0], logged = await mark(repoPath, 'claude-write');
+          if (!cwd) throw new Error('missing worktree'); if (!logged.ok) throw new Error(logged.error.message);
+          await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8');
+          return { text: 'wrote greet', changedFiles: ['src/greet.ts'], tokenEstimate: 1 };
+        }),
+        fix: async () => ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }),
+        cleanup: async () => { const logged = noCodex ? await mark(repoPath, 'cleanup') : ok(undefined); return logged.ok ? ok({ text: noCodex ? 'cleanup' : 'unused', changedFiles: [], tokenEstimate: 1 }) : logged; },
         review: async request => {
           const logged = await mark(repoPath, 'claude-review'); if (!logged.ok) return logged;
           return request.diff.includes('src/greet.ts') && !!request.architectureMd ? ok({ reviewer: request.role, findings: [], duration: 0, rawOutput: 'clean' }) : err('CONFIG_ERROR', 'expected diff + architecture');
@@ -91,10 +99,12 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
       },
       codexWriter: {
         write: async (_prompt, cwd) => {
+          if (noCodex) return err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true');
           const logged = await mark(repoPath, 'write'); if (!logged.ok) return logged;
           return wrap('write greet', async () => { await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8'); return { text: 'wrote greet', changedFiles: ['src/greet.ts'], tokenEstimate: 1 }; });
         },
         fix: async (prompt, cwd) => {
+          if (noCodex) return err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true');
           const cleanupPrompt = buildCleanupPrompt({ scope: task(mode).scope } as never);
           const cleanup = prompt.includes(cleanupPrompt), logged = await mark(repoPath, cleanup ? 'cleanup' : 'fix'); if (!logged.ok) return logged;
           return wrap('fix greet', async () => {

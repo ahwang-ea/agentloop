@@ -8,7 +8,11 @@ export interface InventoryDelta {
   grownFiles: Array<{ path: string; before: number; after: number }>;
 }
 
-const depsOf = (inventory: RepoInventory) => [...new Set(inventory.dependencies.flatMap(file => file.dependencies))].sort();
+const PYPROJECT_REQUIREMENT = /^\s*([A-Za-z][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?/;
+const normalizedDependency = (kind: RepoInventory['dependencies'][number]['kind'], dependency: string) => kind === 'pyproject.toml'
+  ? dependency === 'dependencies' ? undefined : dependency.match(PYPROJECT_REQUIREMENT)?.[1]
+  : dependency;
+const depsOf = (inventory: RepoInventory) => [...new Set(inventory.dependencies.flatMap(file => file.dependencies.map(dependency => normalizedDependency(file.kind, dependency)).filter(Boolean) as string[]))].sort();
 const linesOf = (inventory: RepoInventory) => new Map(inventory.files.map(file => [file.path, file.lines]));
 const frameworksOf = (inventory: RepoInventory) => [...new Set(inventory.tests.frameworks)].sort();
 

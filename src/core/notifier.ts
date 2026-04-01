@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { IncomingWebhook } from '@slack/webhook';
 import { dirname, join } from 'node:path';
 import { ok, err, type Result } from '../shared/result.js';
+import { asObjectArray, asString, parseJson, unwrapVersioned } from './persisted-json.js';
 import { clearStaleLock } from './stale-lock.js';
 import type { AgentloopConfig, Notification, NotifierAdapter } from '../types/index.js';
 
@@ -27,18 +28,23 @@ async function withLock<T>(path: string, run: () => Promise<Result<T>>): Promise
 }
 async function load(path: string): Promise<Result<NotificationState>> {
   try {
-    const raw = JSON.parse(await readFile(path, 'utf-8')) as unknown[];
+    const parsed = parseJson(await readFile(path, 'utf-8'), path); if (!parsed.ok) return parsed;
+    const raw = unwrapVersioned(parsed.value, 'entries');
     if (!Array.isArray(raw)) return err('TRANSPORT_ERROR', `Malformed notifier state ${path}`);
     const legacy = raw.some(item => typeof item === 'string');
-    return ok({
-      legacy,
-      entries: legacy
-        ? raw.filter((item): item is string => typeof item === 'string').map(key => ({ key }))
-        : raw.filter((item): item is NotificationKey => !!item && typeof item === 'object' && typeof (item as NotificationKey).key === 'string'),
-    });
+    if (legacy) return ok({ legacy: true, entries: raw.filter((item): item is string => typeof item === 'string').map(key => ({ key })) });
+    const entries = asObjectArray(raw);
+    if (!entries) return err('TRANSPORT_ERROR', `Malformed notifier state ${path}`);
+    const next: NotificationKey[] = [];
+    for (const entry of entries) {
+      const key = asString(entry.key), createdAt = entry.createdAt == null ? undefined : asString(entry.createdAt);
+      if (!key || (entry.createdAt != null && !createdAt)) return err('TRANSPORT_ERROR', `Malformed notifier state ${path}`);
+      next.push({ key, createdAt });
+    }
+    return ok({ legacy: false, entries: next });
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' ? ok({ entries: [], legacy: false }) : e instanceof SyntaxError ? err('TRANSPORT_ERROR', `Malformed notifier state ${path}`) : err('TRANSPORT_ERROR', `Cannot read notifier state ${path}`);
+    return code === 'ENOENT' ? ok({ entries: [], legacy: false }) : err('TRANSPORT_ERROR', `Cannot read notifier state ${path}`);
   }
 }
 async function save(path: string, keys: NotificationKey[]): Promise<Result<void>> {

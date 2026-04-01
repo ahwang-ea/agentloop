@@ -29,13 +29,19 @@ export function parseMetrics(raw: string, path: string): Result<MetricsRecord[]>
   for (const line of raw.split('\n').filter(Boolean)) {
     let value: unknown;
     try { value = JSON.parse(line); } catch { return err('TRANSPORT_ERROR', `Malformed metrics log ${path}`); }
-    const record = value as Partial<MetricsRecord> & { time_sec?: number; review_findings?: number };
+    const record = value as Partial<MetricsRecord> & {
+      time_sec?: number; review_findings?: number; task_type?: MetricsRecord['taskType']; token_total?: number; verify_time_sec?: number;
+    };
     if (typeof record.task_id !== 'string' || typeof record.task !== 'string' || typeof record.timestamp !== 'string') return err('TRANSPORT_ERROR', `Malformed metrics log ${path}`);
     const next: MetricsRecord = {
+      version: record.version === 2 ? 2 : undefined,
       task_id: record.task_id, task: record.task, rounds: typeof record.rounds === 'number' ? record.rounds : 0,
       timeSec: typeof record.time_sec === 'number' ? record.time_sec : 0, reviewFindings: typeof record.review_findings === 'number' ? record.review_findings : 0,
       outcome: record.outcome ?? 'blocked', errors: Array.isArray(record.errors) ? record.errors.filter((item): item is string => typeof item === 'string') : [],
       files: Array.isArray(record.files) ? record.files.filter((item): item is string => typeof item === 'string') : [], timestamp: record.timestamp,
+      taskType: record.task_type ?? record.taskType,
+      tokenTotal: typeof record.token_total === 'number' ? record.token_total : typeof record.tokenTotal === 'number' ? record.tokenTotal : undefined,
+      verifyTimeSec: typeof record.verify_time_sec === 'number' ? record.verify_time_sec : typeof record.verifyTimeSec === 'number' ? record.verifyTimeSec : undefined,
     };
     if (isNewer(next, latest.get(next.task_id))) latest.set(next.task_id, next);
   }
@@ -53,7 +59,7 @@ function summarize(records: MetricsRecord[], from: number, to: number): MetricsP
   for (const record of windowed) for (const error of record.errors) errorCounts.set(error, (errorCounts.get(error) ?? 0) + 1);
   const [topError, topErrorCount] = [...errorCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0] ?? [null, 0];
   const totalRounds = windowed.reduce((sum, record) => sum + record.rounds, 0), totalTime = windowed.reduce((sum, record) => sum + record.timeSec, 0);
-  return { tasks: windowed.length, avgRounds: windowed.length === 0 ? 0 : round1(totalRounds / windowed.length), avgTimeSec: windowed.length === 0 ? 0 : round1(totalTime / windowed.length), firstPassRate: pct(windowed.filter(record => record.rounds === 1).length, windowed.length), stuckRate: pct(windowed.filter(record => record.outcome === 'stuck').length, windowed.length), topError, topErrorCount };
+  return { tasks: windowed.length, avgRounds: windowed.length === 0 ? 0 : round1(totalRounds / windowed.length), avgTimeSec: windowed.length === 0 ? 0 : round1(totalTime / windowed.length), firstPassRate: pct(windowed.filter(record => record.outcome === 'merged' && record.rounds === 1).length, windowed.length), stuckRate: pct(windowed.filter(record => record.outcome === 'stuck').length, windowed.length), topError, topErrorCount };
 }
 function trend(last7: MetricsPeriod, previous7: MetricsPeriod): MetricsSummary['trend'] {
   if (last7.tasks === 0 || previous7.tasks === 0) return 'insufficient-data';

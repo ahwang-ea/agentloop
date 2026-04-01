@@ -21,6 +21,7 @@ const deps = (write: (prompt: string) => Promise<ReturnType<typeof ok>>) => ({
   git: { trackedFiles: async () => ok([]), revertFiles: async () => ok(undefined) } as never,
   codexWriter: { write: async (prompt: string) => write(prompt), fix: async (prompt: string) => write(prompt) } as never,
 });
+afterEach(() => { jest.restoreAllMocks(); });
 
 test('retries codex write when first pass changes no files', async () => {
   let calls = 0;
@@ -33,16 +34,14 @@ test('retries codex write when first pass changes no files', async () => {
   expect(calls).toBe(2);
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 test('cleanup allows a no-op codex response', async () => {
   const result = await runWriterCleanup(deps(async () => ok({ text: 'clean', changedFiles: [], tokenEstimate: 1 })) as never, undefined, task, '.');
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(result.value.changedFiles).toEqual([]);
 });
-
-
 test('reverts new out-of-scope files from codex output', async () => {
+  jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   let reverted: string[] = [];
   const result = await startWrite({
     config: { repoPath: '.', useCodexWriter: true },
@@ -61,8 +60,6 @@ test('reverts new out-of-scope files from codex output', async () => {
   expect(reverted).toEqual(['src/__tests__/db.test.ts']);
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
-
 test('initial no-op retry uses codex write, not fix', async () => {
   let attempts = 0;
   const write = jest.fn(async (_prompt: string) => ok({ text: 'done', changedFiles: ['src/db/index.ts'], tokenEstimate: 1 }));
@@ -83,7 +80,6 @@ test('initial no-op retry uses codex write, not fix', async () => {
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
 
-
 test('falls back to claude when codex write stays empty', async () => {
   let started = '';
   const result = await startWrite({
@@ -101,11 +97,10 @@ test('falls back to claude when codex write stays empty', async () => {
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(started).toContain('You changed no files');
-  expect(started).toContain('Do not leave TODO stubs');
+  expect(started).toContain('Do not leave placeholder stubs');
   expect(result.value.session?.id).toBe('claude-1');
   expect(result.value.output.changedFiles).toEqual(['src/db/index.ts']);
 });
-
 
 test('falls back to claude when codex leaves placeholder stubs', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'agentloop-writer-'));
@@ -128,15 +123,14 @@ test('falls back to claude when codex leaves placeholder stubs', async () => {
   } as never, task, cwd);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
-  expect(started).toContain('Do not leave TODO stubs');
+  expect(started).toContain('Do not leave placeholder stubs');
   expect(result.value.session?.id).toBe('claude-2');
 });
-
 
 test('retries claude fallback once after a transient failure', async () => {
   let waits = 0;
   const result = await startWrite({
-    config: { repoPath: '.', useCodexWriter: true },
+    config: { repoPath: '.', useCodexWriter: true, claudeRetryDelayMs: 0 },
     claude: {
       startSession: async () => ok({ id: 'claude-3', taskId: 'task-1' }),
       waitForStop: async () => ++waits === 1 ? err('SESSION_ERROR', 'temporary failure') : ok({ text: 'done', changedFiles: ['src/db/index.ts'], tokenEstimate: 1 }),

@@ -36,3 +36,11 @@ test('diffs inventories for docs and intent summaries', () => {
   expect(formatIntentSummary(delta)).toContain('Constraint changes:');
   expect(formatIntentSummary(delta)).toContain('Still aligned with your goals?');
 });
+
+test('normalizes legacy pyproject dependency entries before diffing', () => {
+  const delta = diffInventories(
+    inventory({ dependencies: [{ path: 'pyproject.toml', kind: 'pyproject.toml', dependencies: ['requests', 'dependencies', 'requests>=2', 'typing-extensions>=4; python_version < "3.13"', 'pytest>=8'] }] }),
+    inventory({ dependencies: [{ path: 'pyproject.toml', kind: 'pyproject.toml', dependencies: ['requests', 'typing-extensions', 'pytest', 'rich'] }] }),
+  );
+  expect(delta.newDependencies).toEqual(['rich']);
+});

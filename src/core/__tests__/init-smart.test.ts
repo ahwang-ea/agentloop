@@ -10,6 +10,17 @@ const shouldRunSmartInit = jest.fn(() => true);
 await jest.unstable_mockModule('../smart-init.js', () => ({ runSmartInit, shouldRunSmartInit }));
 const { scaffoldRepo } = await import('../init.js');
 
+beforeEach(() => {
+  runSmartInit.mockReset();
+  shouldRunSmartInit.mockReset();
+  runSmartInit.mockResolvedValue(err('SESSION_ERROR', 'smart init failed'));
+  shouldRunSmartInit.mockReturnValue(true);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 const repo = async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-init-smart-'));
   await writeFile(join(repoPath, 'package.json'), '{"name":"demo","version":"1.0.0"}\n', 'utf-8');

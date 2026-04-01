@@ -2,7 +2,7 @@ import type { TaskState } from '../../types/index.js';
 import { runScenario } from './e2e-mocks.js';
 
 const state = (tasks: TaskState[]) => tasks[0];
-const valueOf = async (mode: 'happy' | 'stuck' | 'debug') => {
+const valueOf = async (mode: 'happy' | 'happy-no-codex' | 'stuck' | 'debug') => {
   const run = await runScenario(mode);
   expect(run.ok).toBe(true);
   expect(run.ok && run.value.result.ok).toBe(true);
@@ -13,9 +13,21 @@ test('runs the full happy-path sequence to done', async () => {
   const run = await valueOf('happy');
   if (!run) return;
   expect(state(run.tasks)?.status).toBe('done');
-  expect(run.events).toEqual(['write', 'verify', 'codex-review', 'claude-review', 'cleanup', 'verify', 'verify', 'merge']);
+  expect(run.events.slice(0, 2)).toEqual(['write', 'verify']);
+  expect([...run.events.slice(2, 4)].sort()).toEqual(['claude-review', 'codex-review']);
+  expect(run.events.slice(4)).toEqual(['cleanup', 'verify', 'merge']);
   expect(run.metrics).toContain('"outcome":"merged"');
   expect(run.metrics).toContain('src/greet.ts');
+});
+
+test('falls back to claude when codex cli is unavailable', async () => {
+  const run = await valueOf('happy-no-codex');
+  if (!run) return;
+  expect(state(run.tasks)?.status).toBe('done');
+  expect(run.events.slice(0, 2)).toEqual(['claude-write', 'verify']);
+  expect([...run.events.slice(2, 4)].sort()).toEqual(['claude-review', 'codex-review']);
+  expect(run.events.slice(4)).toEqual(['cleanup', 'verify', 'merge']);
+  expect(run.metrics).toContain('"outcome":"merged"');
 });
 
 test('escalates repeated verify failures into stuck', async () => {

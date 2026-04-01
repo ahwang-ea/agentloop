@@ -1,4 +1,4 @@
-import { runVerify, truncateVerifyOutput } from '../verifier.js';
+import { progressiveVerify, runVerify, truncateVerifyOutput } from '../verifier.js';
 
 const lines = (count: number) => Array.from({ length: count }, (_, index) => `line-${index + 1}`).join('\n');
 
@@ -24,8 +24,32 @@ test('passes extra environment variables to the verify command', async () => {
   expect(result.value.output).toBe('1');
 });
 
+test('uses injected runtime clock for verify duration', async () => {
+  let calls = 0;
+  const result = await runVerify('printf ok', process.cwd(), undefined, { env: process.env, now: () => calls++ === 0 ? 10_000 : 12_500 });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.duration).toBe(2.5);
+});
+
+test('uses injected runtime env in merge mode', async () => {
+  const result = await progressiveVerify({
+    verifyCommand: String.raw`bash -lc 'printf %s "$AGENTLOOP_MERGE_CHECK/$FROM_RUNTIME"'`,
+  } as never, ['src.ts'], process.cwd(), true, 'implement', { env: { ...process.env, FROM_RUNTIME: 'runtime' }, now: () => 0 });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.pass).toBe(true);
+  expect(result.value.output).toContain('1/runtime');
+});
+
 test('parses jest empty-test failures with the failing file', async () => {
-  const result = await runVerify("cat <<'EOF'\nFAIL src/__tests__/deal.service.test.ts\n  ● Test suite failed to run\n\n    Your test suite must contain at least one test.\nEOF\nexit 1");
+  const result = await runVerify(String.raw`cat <<'EOF'
+FAIL src/__tests__/deal.service.test.ts
+  ● Test suite failed to run
+
+    Your test suite must contain at least one test.
+EOF
+exit 1`);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(result.value.pass).toBe(false);
@@ -37,7 +61,6 @@ test('parses jest empty-test failures with the failing file', async () => {
     }),
   ]);
 });
-
 
 test('parses jest assertion failures with the failing file', async () => {
   const result = await runVerify(String.raw`cat <<'EOF'
@@ -64,7 +87,6 @@ exit 1`);
     }),
   ]);
 });
-
 
 test('parses jest object diffs when Expected/Received lines are absent', async () => {
   const result = await runVerify(String.raw`cat <<'EOF'
@@ -95,5 +117,14 @@ exit 1`);
       line: 103,
       message: expect.stringContaining('Diff: Object { -   "firstName": "Alice", -   "id": "c1", +   "firstName": "", +   "id": ""'),
     }),
+  ]);
+});
+
+test('parses doc-freshness warnings when verify fails', async () => {
+  const result = await runVerify(String.raw`printf 'WARNING: doc-freshness: 2 src/*.ts files changed without AGENTS.md or ARCHITECTURE.md updates\n'; exit 1`);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.errors).toEqual([
+    expect.objectContaining({ source: 'doc-freshness', message: '2 src/*.ts files changed without AGENTS.md or ARCHITECTURE.md updates' }),
   ]);
 });

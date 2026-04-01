@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ok, err, type Result } from '../shared/result.js';
 import { writeInventory } from './scanner.js';
+import { initialScopeFile } from './scope-file.js';
 import { runSmartInit, shouldRunSmartInit } from './smart-init.js';
 
 interface Summary { created: string[]; skipped: string[]; }
@@ -83,8 +84,7 @@ export async function scaffoldRepo(repoPath: string, options: ScaffoldOptions = 
     copyOnce(asset('templates', '.claude', 'commands', 'review-agents-update.md'), join(repoPath, '.claude', 'commands', 'review-agents-update.md'), summary),
     copyOnce(asset('hooks', 'scope-check.py'), join(repoPath, '.agentloop', 'hooks', 'scope-check.py'), summary, 0o755),
     copyOnce(asset('hooks', 'on-stop.py'), join(repoPath, '.agentloop', 'hooks', 'on-stop.py'), summary, 0o755),
-    writeOnce(join(repoPath, '.agentloop', 'current-scope.json'), JSON.stringify({ editableFiles: ['**/*'], readOnlyContext: [], forbiddenFiles: [] }, null, 2), summary),
-    writeOnce(join(repoPath, '.agentloop', 'session-status.json'), JSON.stringify({ status: 'idle' }, null, 2), summary),
+    writeOnce(join(repoPath, '.agentloop', 'current-scope.json'), initialScopeFile(), summary),
     ...security,
   ];
   for (const result of await Promise.all(files)) if (!result.ok) return result;

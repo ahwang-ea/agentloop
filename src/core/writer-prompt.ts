@@ -45,7 +45,7 @@ export const buildWritePrompt = (task: TaskDefinition, examples: string[] = []) 
   'Do not import or add new npm packages unless the task explicitly requires them and package.json is editable; prefer built-in Node APIs or local helpers.',
   'If an editable path is a glob or a missing file, create matching in-scope directories and files yourself before stopping.',
   'Do not create empty source files; every created code file must contain real exports, logic, or tests.',
-  'Do not leave TODO stubs, placeholder error returns, or empty test files; if you create a test file, include at least one real test.',
+  'Do not leave placeholder stubs, placeholder error returns, or empty test files; if you create a test file, include at least one real test.',
   'Keep edits minimal, follow AGENTS.md, and stop when the task is complete.',
   'Before stopping, make at least one real in-scope file edit or create a required in-scope file. Do not reply with only analysis or a plan.',
 ].join('\n');

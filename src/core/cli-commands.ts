@@ -12,6 +12,7 @@ import { enqueueInteractiveTask } from './interactive-task.js';
 import { formatMetricsSummary, readMetricsSummary } from './metrics-report.js';
 import { enqueuePlan, generatePlan } from './planner.js';
 import { approvePlan } from './planner-ui.js';
+import { runStartPreflight } from './preflight.js';
 import { runRescan } from './rescan.js';
 import { formatStatusSummary, readStatusSummary } from './status.js';
 
@@ -25,6 +26,7 @@ export async function handleStart(interactive: boolean, dryRun: boolean, configP
   const config = await loadConfig(configPath); if (!config.ok) return config;
   const runtime = { ...config.value, autoApproveResearch: false };
   if (dryRun) { console.log(JSON.stringify({ command: 'start', interactive, dryRun, config: runtime }, null, 2)); return ok(undefined); }
+  const preflight = await runStartPreflight(runtime); if (!preflight.ok) return preflight;
   const deps = await createDeps(runtime, interactive); if (!deps.ok) return deps;
   if (interactive) { const queued = await enqueueInteractiveTask(deps.value); if (!queued.ok) return queued; }
   return runOrchestrator(deps.value);

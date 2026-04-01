@@ -15,6 +15,10 @@ const config = (repoPath: string) => ({
   convergence: { maxWallClock: 1, maxTokens: 1, stuckThreshold: 1, thrashOverlapRatio: 0.5 },
   taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 2, maxTasksPerSession: 3, maxTokensPerSession: 100000, parallelVerify: true, sweepInterval: 1,
 });
+const readRaw = async (repoPath: string) => {
+  const raw = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{ status: string; round?: number; finalization?: { approved?: boolean } }> | { version: number; tasks: Array<{ status: string; round?: number; finalization?: { approved?: boolean } }> };
+  return Array.isArray(raw) ? raw : raw.tasks;
+};
 
 test('defaults queued tasks to implement type', async () => {
   const repoPath = await mkdtemp(join(tmpdir(), 'agentloop-queue-'));
@@ -41,7 +45,7 @@ test('approves blocked finalization tasks back into finalizing', async () => {
   await queue.markBlocked(task.value.id, 'Awaiting human approval', {}, reClaimed.value.claimToken);
   const approved = await queue.approveBlocked(task.value.id);
   expect(approved.ok).toBe(true);
-  const raw = JSON.parse(await readFile(join(repoPath, 'tasks.json'), 'utf-8')) as Array<{ status: string; finalization?: { approved?: boolean } }>;
+  const raw = await readRaw(repoPath);
   expect(raw[0].status).toBe('finalizing');
   expect(raw[0].finalization?.approved).toBe(true);
 });
@@ -70,7 +74,7 @@ test('approves other blocked tasks by requeueing them', async () => {
   const queue = createFileTaskQueue(config(repoPath));
   const approved = await queue.approveBlocked('b');
   expect(approved.ok).toBe(true);
-  const raw = JSON.parse(await readFile(taskFile, 'utf-8')) as Array<{ status: string; round: number }>;
+  const raw = await readRaw(repoPath);
   expect(raw[0].status).toBe('queued');
   expect(raw[0].round).toBe(0);
 });

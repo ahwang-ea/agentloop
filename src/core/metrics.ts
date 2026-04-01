@@ -1,13 +1,16 @@
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { appendFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
 import type {
   AgentloopConfig, ConvergenceState, MetricsOutcome, MetricsRecord,
   ReviewFinding, TaskDefinition, TaskMetricsStats, TaskQueueAdapter, TaskState, VerifyError,
 } from '../types/index.js';
+import { withArtifactLock } from './artifact-lock.js';
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))].sort();
 const terminalAt = (state: TaskState) => state.completedAt ?? state.blocked?.blockedAt ?? new Date().toISOString();
+const roundTotal = (state: ConvergenceState | undefined, key: 'elapsed' | 'tokens') =>
+  state?.rounds.reduce((sum, round) => sum + Math.max(0, round[key]), 0) ?? 0;
 const slug = (text: string) => {
   const value = text.toLowerCase().replace(/\bts\d+\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
   return value ? value.split(/\s+/).slice(0, 4).join('_') : 'unknown';
@@ -38,6 +41,9 @@ export const metricsFromTaskState = (state: TaskState): TaskMetricsStats => {
     errors: unique(conv?.errorTypes ?? []),
     files: unique(conv?.changedFiles ?? []),
     timestamp,
+    taskType: state.task.type,
+    tokenTotal: roundTotal(conv, 'tokens'),
+    verifyTimeSec: roundTotal(conv, 'elapsed'),
   };
 };
 
@@ -53,6 +59,7 @@ export async function logMetrics(
 ): Promise<Result<void>> {
   const path = metricsPath(config);
   const record: MetricsRecord = {
+    version: 2,
     task_id: task.id,
     task: task.title,
     rounds: stats.rounds,
@@ -62,20 +69,30 @@ export async function logMetrics(
     errors: unique(stats.errors),
     files: unique(stats.files),
     timestamp: stats.timestamp,
+    taskType: stats.taskType ?? task.type,
+    tokenTotal: stats.tokenTotal ?? 0,
+    verifyTimeSec: stats.verifyTimeSec ?? 0,
   };
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, `${JSON.stringify({
-      ...record,
-      time_sec: record.timeSec,
-      review_findings: record.reviewFindings,
-      timeSec: undefined,
-      reviewFindings: undefined,
-    })}\n`, 'utf-8');
-    return ok(undefined);
-  } catch (e) {
-    return err('TRANSPORT_ERROR', `Cannot append metrics ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
-  }
+  return withArtifactLock(path, 'metrics', async () => {
+    try {
+      await appendFile(path, `${JSON.stringify({
+        ...record,
+        time_sec: record.timeSec,
+        review_findings: record.reviewFindings,
+        task_type: record.taskType,
+        token_total: record.tokenTotal,
+        verify_time_sec: record.verifyTimeSec,
+        timeSec: undefined,
+        reviewFindings: undefined,
+        taskType: undefined,
+        tokenTotal: undefined,
+        verifyTimeSec: undefined,
+      })}\n`, 'utf-8');
+      return ok(undefined);
+    } catch (e) {
+      return err('TRANSPORT_ERROR', `Cannot append metrics ${path}: ${e instanceof Error ? e.message : 'unknown error'}`);
+    }
+  });
 }
 
 export async function logTaskMetrics(
