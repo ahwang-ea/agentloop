@@ -100,6 +100,14 @@ test('does not duplicate maxWorkers when test already sets it', async () => {
   expect(await readFile(join(repoPath, 'log.txt'), 'utf-8')).toBe('typecheck\nrelated\nfull\nlint\n');
 });
 
+test('rejects unsupported parallelVerify=false', async () => {
+  const repoPath = await repo();
+  const result = await progressiveVerify({ verifyCommand: './verify.sh', parallelVerify: false } as never, ['src.ts'], repoPath, false);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.code).toBe('CONFIG_ERROR');
+});
+
 test('runs integration command only for integrate tasks', async () => {
   const repoPath = await repo();
   await writeFile(join(repoPath, 'package.json'), JSON.stringify({ name: 'progressive', scripts: { typecheck: nodeScript('typecheck') } }), 'utf-8');

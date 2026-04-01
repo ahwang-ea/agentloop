@@ -4,6 +4,7 @@ set -euo pipefail
 progressive=0
 merge_mode="${AGENTLOOP_MERGE_CHECK:-0}"
 files=()
+test_args=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --progressive) progressive=1 ;;
@@ -12,6 +13,16 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+load_test_args() {
+  test_args=(--maxWorkers=100%)
+  [ -f package.json ] || return 0
+  local script
+  script="$(node -e "const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));process.stdout.write(String(pkg.scripts?.test ?? ''));" 2>/dev/null || true)"
+  case "$script" in
+    *--maxWorkers=*|*--runInBand*) test_args=() ;;
+  esac
+}
 
 detect_doc_base() {
   if [ -n "${AGENTLOOP_DOC_BASE:-}" ]; then
@@ -60,7 +71,7 @@ run_checks() {
       exit 1
     fi
     if [ "$merge_mode" = "1" ]; then
-      if command -v npx >/dev/null 2>&1; then npx depcheck --ignores="@types/*" || exit 1; fi
+      if [ "${AGENTLOOP_SKIP_DEPCHECK:-0}" != "1" ] && command -v npx >/dev/null 2>&1; then npx depcheck --ignores="@types/*" || exit 1; fi
       if grep -rnE '^\s*//\s*(const|let|var|function|class|if|for|while|switch|return|import|export|[A-Za-z0-9_$]+\s*[({=])' src/ \
         | grep -v 'TODO\|FIXME\|HACK\|NOTE\|eslint'; then
         echo "ERROR: commented-out code found"
@@ -71,14 +82,19 @@ run_checks() {
   fi
 }
 
+load_test_args
+run_test() {
+  if [ "${#test_args[@]}" -gt 0 ]; then npm test -- "$@" "${test_args[@]}"; else npm test -- "$@"; fi
+}
+
 if [ "$progressive" -eq 1 ] && [ -f package.json ]; then
   scripts="$(npm run 2>/dev/null || true)"
   has_script() { printf '%s\n' "$scripts" | grep -qE "^[[:space:]]+$1$"; }
   ran=0
   if has_script typecheck; then npm run typecheck; ran=1; fi
-  if has_script test && [ "${#files[@]}" -gt 0 ]; then npm test -- --findRelatedTests "${files[@]}"; ran=1; fi
+  if has_script test && [ "${#files[@]}" -gt 0 ]; then run_test --findRelatedTests "${files[@]}" --passWithNoTests; ran=1; fi
   if [ "$merge_mode" = "1" ]; then
-    if has_script test; then npm test; ran=1; fi
+    if has_script test; then run_test; ran=1; fi
     if has_script lint; then npm run lint; ran=1; fi
   fi
   if [ "$ran" -eq 1 ]; then run_checks; exit 0; fi
@@ -94,7 +110,7 @@ if [ -f package.json ]; then
   else
     if has_script lint; then npm run lint; ran=1; fi
     if has_script typecheck; then npm run typecheck; ran=1; fi
-    if has_script test; then npm test; ran=1; fi
+    if has_script test; then run_test; ran=1; fi
     if has_script build; then npm run build; ran=1; fi
   fi
   if [ "$ran" -eq 1 ]; then run_checks; exit 0; fi

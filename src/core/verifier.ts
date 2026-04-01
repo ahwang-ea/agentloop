@@ -46,6 +46,10 @@ async function integrationVerify(config: AgentloopConfig, cwd: string, runtime: 
   return config.integrationTestCommand ? runVerify(config.integrationTestCommand, cwd, runtime.env, runtime) : err('CONFIG_ERROR', 'integrationTestCommand is required for integrate tasks');
 }
 
+const validateParallelVerify = (config: Pick<AgentloopConfig, 'parallelVerify'>): Result<undefined> => {
+  return config.parallelVerify === false ? err('CONFIG_ERROR', 'parallelVerify cannot be false; tests must run in parallel') : ok(undefined);
+};
+
 export async function progressiveVerify(
   config: AgentloopConfig,
   changedFiles: string[],
@@ -54,6 +58,8 @@ export async function progressiveVerify(
   taskType: TaskType = 'implement',
   runtime: VerifyRuntime = systemRuntime,
 ): Promise<Result<VerifyResult>> {
+  const parallel = validateParallelVerify(config);
+  if (!parallel.ok) return parallel;
   const args = ['--progressive', ...(mergeMode ? ['--merge'] : []), ...changedFiles.map(quote)].join(' ');
   const env = mergeMode ? withEnv(runtime, { AGENTLOOP_MERGE_CHECK: '1' }) : runtime.env;
   const verify = await runVerify(`${config.verifyCommand} ${args}`.trim(), cwd, env, runtime);
@@ -81,8 +87,7 @@ function parseVerifyOutput(output: string) {
     const match = line.match(/^(.+?):(\d+):\d+:\s*(error|warning):\s*(.+)/);
     if (match) {
       pushTest();
-      const message = match[4];
-      errors.push({ source: 'typecheck', message, file: match[1], line: parseInt(match[2], 10), hash: hash(`${match[1]}:${message}`) });
+      errors.push({ source: 'typecheck', message: match[4], file: match[1], line: parseInt(match[2], 10), hash: hash(`${match[1]}:${match[4]}`) });
       continue;
     }
     const failed = line.match(/^FAIL\s+(.+)/);
