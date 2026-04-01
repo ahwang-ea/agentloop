@@ -5,10 +5,12 @@ import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { ok, err, type Result } from '../shared/result.js';
 import type { AgentloopConfig, TaskType, VerifyResult } from '../types/index.js';
+import { elapsedSeconds, systemRuntime, withEnv, type RuntimeDeps } from './runtime.js';
 
 const exec = promisify(execFile);
 const quote = (value: string) => `'${value.replace(/'/g, `"'"'`)}'`;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 12);
+type VerifyRuntime = Pick<RuntimeDeps, 'env' | 'now'>;
 
 export function truncateVerifyOutput(output: string): string {
   const lines = output.split('\n');
@@ -16,13 +18,18 @@ export function truncateVerifyOutput(output: string): string {
   return [...lines.slice(0, 50), '... (truncated) ...', ...lines.slice(-10)].join('\n');
 }
 
-export async function runVerify(command: string, cwd = process.cwd(), env = process.env): Promise<Result<VerifyResult>> {
-  const start = Date.now();
+export async function runVerify(
+  command: string,
+  cwd = process.cwd(),
+  env?: NodeJS.ProcessEnv,
+  runtime: VerifyRuntime = systemRuntime,
+): Promise<Result<VerifyResult>> {
+  const start = runtime.now(), resolvedEnv = env ?? runtime.env;
   try {
-    const { stdout, stderr } = await exec('bash', ['-c', command], { cwd, env, timeout: 120_000 });
-    return ok({ pass: true, output: stdout + stderr, errors: [], duration: (Date.now() - start) / 1000 });
+    const { stdout, stderr } = await exec('bash', ['-c', command], { cwd, env: resolvedEnv, timeout: 120_000 });
+    return ok({ pass: true, output: stdout + stderr, errors: [], duration: elapsedSeconds(runtime, start) });
   } catch (e: unknown) {
-    const duration = (Date.now() - start) / 1000;
+    const duration = elapsedSeconds(runtime, start);
     const error = e as { stdout?: string; stderr?: string; code?: number | string };
     if (typeof error.code === 'string' && error.code === 'ENOENT') return err('VERIFY_FAILED', `Verify command not found: ${command}`);
     const output = (error.stdout ?? '') + (error.stderr ?? '');
@@ -35,17 +42,23 @@ export async function runVerify(command: string, cwd = process.cwd(), env = proc
   }
 }
 
-async function integrationVerify(config: AgentloopConfig, cwd: string): Promise<Result<VerifyResult>> {
-  return config.integrationTestCommand ? runVerify(config.integrationTestCommand, cwd) : err('CONFIG_ERROR', 'integrationTestCommand is required for integrate tasks');
+async function integrationVerify(config: AgentloopConfig, cwd: string, runtime: VerifyRuntime): Promise<Result<VerifyResult>> {
+  return config.integrationTestCommand ? runVerify(config.integrationTestCommand, cwd, runtime.env, runtime) : err('CONFIG_ERROR', 'integrationTestCommand is required for integrate tasks');
 }
 
 export async function progressiveVerify(
-  config: AgentloopConfig, changedFiles: string[], cwd: string, mergeMode: boolean, taskType: TaskType = 'implement',
+  config: AgentloopConfig,
+  changedFiles: string[],
+  cwd: string,
+  mergeMode: boolean,
+  taskType: TaskType = 'implement',
+  runtime: VerifyRuntime = systemRuntime,
 ): Promise<Result<VerifyResult>> {
   const args = ['--progressive', ...(mergeMode ? ['--merge'] : []), ...changedFiles.map(quote)].join(' ');
-  const verify = await runVerify(`${config.verifyCommand} ${args}`.trim(), cwd, mergeMode ? { ...process.env, AGENTLOOP_MERGE_CHECK: '1' } : process.env);
+  const env = mergeMode ? withEnv(runtime, { AGENTLOOP_MERGE_CHECK: '1' }) : runtime.env;
+  const verify = await runVerify(`${config.verifyCommand} ${args}`.trim(), cwd, env, runtime);
   if (!verify.ok || !verify.value.pass || taskType !== 'integrate') return verify;
-  return integrationVerify(config, cwd);
+  return integrationVerify(config, cwd, runtime);
 }
 
 function parseVerifyOutput(output: string) {

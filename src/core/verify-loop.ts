@@ -16,6 +16,7 @@ import type {
 import { classifyConvergence, trackRound, shouldWebSearch } from './convergence.js';
 import { withLease } from './lease.js';
 import { recordSessionChanges, recordVerifyErrors } from './metrics.js';
+import { elapsedSeconds, flagEnabled, systemRuntime, type RuntimeDeps } from './runtime.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { progressiveVerify, truncateVerifyOutput } from './verifier.js';
 import { runWriterFix, type WriterDeps } from './writer.js';
@@ -28,10 +29,12 @@ export interface VerifyDeps extends WriterDeps {
   config: AgentloopConfig;
 }
 
+type LoopRuntime = Pick<RuntimeDeps, 'env' | 'now'>;
+
 const setStatus = (d: VerifyDeps, id: string, s: TaskStatus, token: string) => d.queue.updateStatus(id, s, token);
-const shouldLogVerify = () => process.env.AGENTLOOP_LOG_VERIFY === '1';
-const logVerify = (task: TaskDefinition, round: number, files: string[], pass: boolean, output: string) => {
-  if (!shouldLogVerify()) return;
+const shouldLogVerify = (runtime: Pick<RuntimeDeps, 'env'>) => flagEnabled(runtime, 'AGENTLOOP_LOG_VERIFY');
+const logVerify = (runtime: LoopRuntime, task: TaskDefinition, round: number, files: string[], pass: boolean, output: string) => {
+  if (!shouldLogVerify(runtime)) return;
   const banner = `[verify] ${task.id} round ${round} ${pass ? 'pass' : 'fail'} files=${files.join(', ') || '(none)'}`;
   console.error(banner);
   if (pass) return;
@@ -70,20 +73,29 @@ const verifyFixPrompt = (task: TaskDefinition, verify: VerifyResult) => verify.e
 ].join('\n');
 
 export async function verifyLoop(
-  d: VerifyDeps, session: ClaudeSession | undefined, task: TaskDefinition,
-  initTokenEstimate: number, lastChangedFiles: string[], conv: ConvergenceState, t0: number, cwd: string, token: string, usage: TaskUsage,
+  d: VerifyDeps,
+  session: ClaudeSession | undefined,
+  task: TaskDefinition,
+  initTokenEstimate: number,
+  lastChangedFiles: string[],
+  conv: ConvergenceState,
+  t0: number,
+  cwd: string,
+  token: string,
+  usage: TaskUsage,
+  runtime: LoopRuntime = systemRuntime,
 ): Promise<Result<void>> {
   const { convergence: cc } = d.config;
   let lastTokenEstimate = initTokenEstimate, files = lastChangedFiles;
   while (true) {
-    const v = await progressiveVerify(d.config, files, cwd, false, task.type);
+    const v = await progressiveVerify(d.config, files, cwd, false, task.type, runtime);
     if (!v.ok) return err(v.error.code, v.error.message);
-    logVerify(task, conv.rounds.length + 1, files, v.value.pass, v.value.output);
+    logVerify(runtime, task, conv.rounds.length + 1, files, v.value.pass, v.value.output);
     recordVerifyErrors(conv, v.value.errors);
     trackRound(conv, v.value, lastTokenEstimate);
     const sp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!sp.ok) return sp;
     if (v.value.pass) return ok(undefined);
-    if ((Date.now() - t0) / 1000 > cc.maxWallClock) return err('BUDGET_EXCEEDED', `Wall clock: ${conv.rounds.length} rounds`);
+    if (elapsedSeconds(runtime, t0) > cc.maxWallClock) return err('BUDGET_EXCEEDED', `Wall clock: ${conv.rounds.length} rounds`);
     const tokens = conv.rounds.reduce((sum, round) => sum + round.tokens, 0);
     if (tokens > cc.maxTokens) return err('BUDGET_EXCEEDED', `Tokens: ${tokens}/${cc.maxTokens}`);
     conv.classification = classifyConvergence(conv, cc);
@@ -100,6 +112,5 @@ export async function verifyLoop(
     addTaskTokens(usage, fix.value.tokenEstimate);
     recordSessionChanges(conv, fix.value.changedFiles);
     const fp = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!fp.ok) return fp;
-    const sv = await setStatus(d, task.id, 'verifying', token); if (!sv.ok) return sv;
   }
 }

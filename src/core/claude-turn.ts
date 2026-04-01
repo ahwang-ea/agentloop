@@ -3,13 +3,13 @@
 import { query, type Options, type SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, SessionOutput } from '../types/index.js';
+import { systemRuntime, withEnv, type RuntimeDeps } from './runtime.js';
 import type { ToolMode } from './claude-session-store.js';
 
 export interface TurnResult extends SessionOutput { sessionId: string; }
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const RESEARCH_TOOLS = ['Read', 'Grep', 'Glob', 'Write', 'Edit', 'MultiEdit', 'Bash', 'WebSearch'];
-const APP_ENV = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'agentloop/0.1.0' };
 const PROJECT_SETTINGS: SettingSource[] = ['project'];
 const READ_ONLY_TURNS = 10;
 const WRITE_TURNS = 40;
@@ -37,7 +37,7 @@ const tools = (mode: ToolMode): string[] | { type: 'preset'; preset: 'claude_cod
 
 const agentic = (mode: ToolMode) => mode === 'write' || mode === 'research';
 const transient = (text: string) => /(?:repeated\s+529|\b529\b.*overloaded|api error:|rate limit|temporarily unavailable)/i.test(text);
-const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const appEnv = (runtime: Pick<RuntimeDeps, 'env'>): NodeJS.ProcessEnv => withEnv(runtime, { CLAUDE_AGENT_SDK_CLIENT_APP: 'agentloop/0.1.0' });
 
 export async function runClaudeTurn(
   config: AgentloopConfig,
@@ -46,16 +46,17 @@ export async function runClaudeTurn(
   resume: string | undefined,
   mode: ToolMode,
   timeoutMs?: number,
+  runtime: RuntimeDeps = systemRuntime,
 ): Promise<Result<TurnResult>> {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     let retry = false, hookStop = false, sessionId = resume ?? '';
     const changedFiles = new Set<string>(), abortController = new AbortController();
-    const timer = timeoutMs ? setTimeout(() => abortController.abort(), timeoutMs) : undefined;
+    const timer = timeoutMs ? runtime.setTimeout(() => abortController.abort(), timeoutMs) : undefined;
     try {
       const options: Options = {
         abortController,
         cwd,
-        env: APP_ENV,
+        env: appEnv(runtime),
         maxTurns: agentic(mode) ? WRITE_TURNS : READ_ONLY_TURNS,
         model: config.claudeModel,
         permissionMode: agentic(mode) ? 'acceptEdits' : 'dontAsk',
@@ -98,10 +99,10 @@ export async function runClaudeTurn(
       if (attempt < MAX_ATTEMPTS - 1 && transient(message)) retry = true;
       else return err('SESSION_ERROR', `Claude query failed: ${message}`);
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) runtime.clearTimeout(timer);
     }
     if (!retry) return err('EMPTY_RESPONSE', 'Claude query returned no result');
-    await pause(RETRY_DELAY_MS * (attempt + 1));
+    await runtime.sleep(RETRY_DELAY_MS * (attempt + 1));
   }
   return err('SESSION_ERROR', 'Claude query hit repeated transient API errors');
 }

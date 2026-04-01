@@ -10,6 +10,7 @@ import {
 } from './claude-session-store.js';
 import { runClaudeTurn } from './claude-turn.js';
 import { buildReviewPrompt, parseReviewOutput } from './review-output.js';
+import { elapsedSeconds, systemRuntime, type RuntimeDeps } from './runtime.js';
 import { buildScaffoldPrompt, parseScaffoldOutput } from './scaffold.js';
 import { cleanupPrompt, buildWritePrompt } from './writer-prompt.js';
 
@@ -18,10 +19,10 @@ const SCAFFOLD_TIMEOUT_MS = 60_000;
 const REVIEW_TIMEOUT_MS = 60_000;
 const CHAT_TIMEOUT_MS = 180_000;
 
-export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
+export function createClaudeAdapter(config: AgentloopConfig, runtime: RuntimeDeps = systemRuntime): ClaudeAdapter {
   const sessions = new Map<string, StoredSession>();
   const runStoredTurn = async (stored: StoredSession, prompt: string): Promise<Result<WriterOutput>> => {
-    const turn = await runClaudeTurn(config, stored.cwd, prompt, stored.resumeId, stored.mode, WRITE_TIMEOUT_MS);
+    const turn = await runClaudeTurn(config, stored.cwd, prompt, stored.resumeId, stored.mode, WRITE_TIMEOUT_MS, runtime);
     if (!turn.ok) return turn;
     stored.resumeId = turn.value.sessionId;
     return ok({ text: turn.value.text, changedFiles: turn.value.changedFiles, tokenEstimate: turn.value.tokensDelta });
@@ -43,19 +44,21 @@ export function createClaudeAdapter(config: AgentloopConfig): ClaudeAdapter {
       if (result.ok) stored.value.initialPrompt = '';
       return result;
     },
-    fix: (session, errors) => runSessionTurn(session, `Address the following feedback, make the necessary edits, and stop when done:\n\n${errors}`),
+    fix: (session, errors) => runSessionTurn(session, `Address the following feedback, make the necessary edits, and stop when done:
+
+${errors}`),
     cleanup: session => runSessionTurn(session, cleanupPrompt),
     async review(request) {
-      const started = Date.now();
-      const turn = await runClaudeTurn(config, config.repoPath, buildReviewPrompt(request), undefined, 'prompt', REVIEW_TIMEOUT_MS);
-      return turn.ok ? parseReviewOutput(turn.value.text, request.role, (Date.now() - started) / 1000) : turn;
+      const started = runtime.now();
+      const turn = await runClaudeTurn(config, config.repoPath, buildReviewPrompt(request), undefined, 'prompt', REVIEW_TIMEOUT_MS, runtime);
+      return turn.ok ? parseReviewOutput(turn.value.text, request.role, elapsedSeconds(runtime, started)) : turn;
     },
     async chat(message) {
-      const turn = await runClaudeTurn(config, config.repoPath, message, undefined, 'prompt', CHAT_TIMEOUT_MS);
+      const turn = await runClaudeTurn(config, config.repoPath, message, undefined, 'prompt', CHAT_TIMEOUT_MS, runtime);
       return turn.ok ? ok({ text: turn.value.text, tokensDelta: turn.value.tokensDelta, changedFiles: turn.value.changedFiles, stopReason: turn.value.stopReason }) : turn;
     },
     async scaffold(task) {
-      const turn = await runClaudeTurn(config, config.repoPath, buildScaffoldPrompt(task), undefined, 'readonly', SCAFFOLD_TIMEOUT_MS);
+      const turn = await runClaudeTurn(config, config.repoPath, buildScaffoldPrompt(task), undefined, 'readonly', SCAFFOLD_TIMEOUT_MS, runtime);
       return turn.ok ? parseScaffoldOutput(turn.value.text) : turn;
     },
     async evictTaskSessions(taskId) {
