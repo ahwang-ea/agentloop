@@ -30,7 +30,7 @@ const config = (repoPath: string): AgentloopConfig => ({
   repoPath, baseBranch: 'main', branchPrefix: 'al/', worktreeRoot: join(repoPath, '.worktrees'), verifyCommand: './verify.sh',
   agentsMdPath: join(repoPath, 'AGENTS.md'), architectureMdPath: join(repoPath, 'ARCHITECTURE.md'), claudeModel: 'claude', codexModel: 'codex',
   codexEnabled: true, useCodexWriter: true, convergence: { maxWallClock: 30, maxTokens: 100, stuckThreshold: 2, thrashOverlapRatio: 0.5 },
-  taskSource: 'file', taskFilePath: join(repoPath, 'tasks.json'), maxParallelAgents: 1, maxTasksPerSession: 3, maxTokensPerSession: 1000, parallelVerify: true, sweepInterval: 99,
+  taskSource: 'file', taskFilePath: join(repoPath, 'tasks.json'), maxParallelAgents: 1, maxTasksPerSession: 3, maxTokensPerSession: 1000, parallelVerify: true, sweepInterval: 0,
 });
 const task = (mode: Mode): TaskInput => ({
   title: `${mode} path`, description: 'Add greet implementation', type: mode === 'debug' ? 'debug' : 'implement',

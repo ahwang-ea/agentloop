@@ -20,6 +20,24 @@ const taskType = (value: unknown): PlannedTask['type'] => {
   const normalized = text(value).toLowerCase();
   return normalized === 'test' ? 'implement' : normalized as PlannedTask['type'];
 };
+const rules = [
+  'Each task must include: planId, title, description, type, scope, acceptanceCriteria, priority, optional feature, optional dependsOn.',
+  'Task type must be research|implement|integrate|debug. Keep each task to 1-3 editable files.',
+  'scope must be: { editableFiles: string[], readOnlyContext: string[], forbiddenFiles: string[] }.',
+  'CRITICAL: editableFiles MUST be non-empty. Use glob patterns for directories (e.g. ["src/types/*.ts", "src/routes/contacts.ts"]).',
+  'For new repos, list paths to create. Always include a glob for the parent directory so supporting files can be created (e.g. "src/types/*.ts" not just "src/types/domain.ts").',
+  'If acceptance criteria mention a file path, include that file or its parent glob in editableFiles unless it is read-only context.',
+  'If a task adds or updates tests, include the relevant test file path or test-directory glob in editableFiles.',
+  'Each task MUST have unique editableFiles — no two tasks may share the exact same set of editable files.',
+  'Start with research when external APIs/libraries are needed. Put types-first tasks before implementation tasks.',
+  'Keep shared entity names, field names, status values, and DB/service/schema terminology consistent across tasks.',
+  'Reuse names from the shared types task instead of introducing aliases like stage/status or body/content unless a mapping layer is explicit.',
+  'If shared types mark a field optional, keep it optional across planned tasks unless the goal or acceptance criteria explicitly tighten that contract.',
+  'Assume package.json is read-only unless a task must change dependencies; prefer plans that reuse the dependencies already present in the repo.',
+  'Do not invent extra library-specific requirements or impossible invariants unless they appear in the goal, architecture, or existing repo files.',
+  'Include tests in acceptance criteria. Use dependsOn only for EARLIER planIds.',
+];
+const issueBlock = (issues: string[]) => issues.length === 0 ? [] : ['', 'Fix these validation issues from your last attempt:', ...issues.map(issue => `- ${issue}`)];
 const normalizeTask = (task: PlannedTask): PlannedTask => {
   const extras = acceptanceFiles(task.acceptanceCriteria).filter(file => !matches(file, task.scope.editableFiles) && !matches(file, task.scope.readOnlyContext) && !matches(file, task.scope.forbiddenFiles));
   return extras.length === 0 ? task : { ...task, scope: { ...task.scope, editableFiles: uniq([...task.scope.editableFiles, ...extras]) } };
@@ -38,32 +56,17 @@ export const parsePlanJson = (raw: string): Result<PlannedTask[]> => {
 const prompt = (goal: string, tree: string[], agents?: string, architecture?: string, issues: string[] = []) => [
   'Plan work for this repository. Return ONLY JSON: an ordered array of tasks.',
   'Do not include markdown fences, prose, or explanations before or after the JSON.',
-  'Each task must include: planId, title, description, type, scope, acceptanceCriteria, priority, optional feature, optional dependsOn.',
-  'Task type must be research|implement|integrate|debug. Keep each task to 1-3 editable files.',
-  'scope must be: { editableFiles: string[], readOnlyContext: string[], forbiddenFiles: string[] }.',
-  'CRITICAL: editableFiles MUST be non-empty. Use glob patterns for directories (e.g. ["src/types/*.ts", "src/routes/contacts.ts"]).',
-  'For new repos, list paths to create. Always include a glob for the parent directory so supporting files can be created (e.g. "src/types/*.ts" not just "src/types/domain.ts").',
-  'If acceptance criteria mention a file path, include that file or its parent glob in editableFiles unless it is read-only context.',
-  'If a task adds or updates tests, include the relevant test file path or test-directory glob in editableFiles.',
-  'Each task MUST have unique editableFiles — no two tasks may share the exact same set of editable files.',
-  'Start with research when external APIs/libraries are needed. Put types-first tasks before implementation tasks.',
-  'Keep shared entity names, field names, status values, and DB/service/schema terminology consistent across tasks.',
-  'Reuse names from the shared types task instead of introducing aliases like stage/status or body/content unless a mapping layer is explicit.',
-  'If shared types mark a field optional, keep it optional across planned tasks unless the goal or acceptance criteria explicitly tighten that contract.',
-  'Assume package.json is read-only unless a task must change dependencies; prefer plans that reuse the dependencies already present in the repo.',
-  'Do not invent extra library-specific requirements or impossible invariants unless they appear in the goal, architecture, or existing repo files.',
-  'Include tests in acceptance criteria. Use dependsOn only for EARLIER planIds.',
-  ...(issues.length === 0 ? [] : ['', 'Fix these validation issues from your last attempt:', ...issues.map(issue => `- ${issue}`)]),
+  ...rules,
+  ...issueBlock(issues),
   '', 'Goal:', goal, '', 'File tree:', tree.length === 0 ? '(empty repo)' : tree.join('\n'),
   ...(agents ? ['', 'AGENTS.md:', agents] : []), ...(architecture ? ['', 'ARCHITECTURE.md:', architecture] : []),
 ].join('\n');
 const compactPrompt = (goal: string, tree: string[], issues: string[] = []) => [
-  'Return ONLY a raw JSON array of task objects.',
-  'No markdown, no prose, no explanations, and no bullets.',
-  'Each task needs: planId, title, description, type, priority, scope, acceptanceCriteria, dependsOn.',
-  'scope must be {"editableFiles":["src/*.ts"],"readOnlyContext":[],"forbiddenFiles":[]}.',
+  'Plan work for this repository. Return ONLY JSON: an ordered array of tasks.',
+  'Do not include markdown fences, prose, or explanations before or after the JSON.',
+  ...rules,
   'Example: [{"planId":"plan-1","title":"Define shared types","description":"Create shared Result and domain types.","type":"implement","priority":"high","scope":{"editableFiles":["src/types/*.ts"],"readOnlyContext":["AGENTS.md","ARCHITECTURE.md"],"forbiddenFiles":["package.json"]},"acceptanceCriteria":["src/types/index.ts exports shared types","npm test passes"],"dependsOn":[]}].',
-  ...(issues.length === 0 ? [] : ['', 'Fix these issues:', ...issues.map(issue => `- ${issue}`)]),
+  ...issueBlock(issues),
   '', 'Goal:', goal, '', 'File tree:', tree.length === 0 ? '(empty repo)' : tree.join('\n'),
 ].join('\n');
 const logPlan = (stage: string, raw: string, stopReason: string, issue: string) => {
@@ -78,10 +81,18 @@ const resolvedDeps = (ids: Map<string, string>, task: PlannedTask) => {
 
 export const formatPlan = (plan: PlannedTask[]) => plan.map((task, index) => `${index + 1}. [${task.planId}] [${task.type}] ${task.title}${task.dependsOn?.length ? ` (depends on: ${task.dependsOn.join(', ')})` : ''}`).join('\n');
 export async function generatePlan(d: PlannerDeps, goal: string): Promise<Result<PlannedTask[]>> {
-  const [agents, architecture, inventory] = await Promise.all([readRepoFile(d.config.repoPath, d.config.agentsMdPath), readRepoFile(d.config.repoPath, d.config.architectureMdPath), scanRepo(d.config.repoPath)]);
-  if (!agents.ok) return agents; if (!architecture.ok) return architecture; if (!inventory.ok) return inventory;
+  const inventory = await scanRepo(d.config.repoPath); if (!inventory.ok) return inventory;
   const tree = inventory.value.files.map(file => file.path), jsonOnly = ['Return ONLY a raw JSON array. Do not include markdown fences, prose, or commentary.'];
-  const run = async (issues: string[] = [], compact = false) => d.claude.chat(compact ? compactPrompt(goal, tree, issues) : prompt(goal, tree, agents.value, architecture.value, issues));
+  let docs: { agents?: string; architecture?: string } | undefined;
+  const run = async (issues: string[] = [], expanded = false) => {
+    if (!expanded) return d.claude.chat(compactPrompt(goal, tree, issues));
+    if (!docs) {
+      const [agents, architecture] = await Promise.all([readRepoFile(d.config.repoPath, d.config.agentsMdPath), readRepoFile(d.config.repoPath, d.config.architectureMdPath)]);
+      if (!agents.ok) return agents; if (!architecture.ok) return architecture;
+      docs = { agents: agents.value, architecture: architecture.value };
+    }
+    return d.claude.chat(prompt(goal, tree, docs?.agents, docs?.architecture, issues));
+  };
   const first = await run(); if (!first.ok) return err(first.error.code, `Plan generation failed: ${first.error.message}`);
   let parsed = parsePlanJson(first.value.text);
   if (!parsed.ok) {
@@ -90,14 +101,14 @@ export async function generatePlan(d: PlannerDeps, goal: string): Promise<Result
     parsed = parsePlanJson(repair.value.text);
     if (!parsed.ok) {
       logPlan('repair', repair.value.text, repair.value.stopReason, parsed.error.message);
-      const compact = await run([parsed.error.message, ...jsonOnly], true); if (!compact.ok) return err(compact.error.code, `Plan regeneration failed: ${compact.error.message}`);
-      parsed = parsePlanJson(compact.value.text); if (!parsed.ok) { logPlan('compact', compact.value.text, compact.value.stopReason, parsed.error.message); return parsed; }
+      const expanded = await run([parsed.error.message, ...jsonOnly], true); if (!expanded.ok) return err(expanded.error.code, `Plan regeneration failed: ${expanded.error.message}`);
+      parsed = parsePlanJson(expanded.value.text); if (!parsed.ok) { logPlan('expanded', expanded.value.text, expanded.value.stopReason, parsed.error.message); return parsed; }
     }
   }
   const issues = validatePlan(parsed.value);
   if (issues.length === 0) return parsed;
   if (process.env.AGENTLOOP_LOG_PLAN === '1' || process.env.AGENTLOOP_LOG_VERIFY === '1') console.error(`[planner:validation-issues] ${issues.join(' | ')}`);
-  const second = await run(issues); if (!second.ok) return err(second.error.code, `Plan regeneration failed: ${second.error.message}`);
+  const second = await run(issues, true); if (!second.ok) return err(second.error.code, `Plan regeneration failed: ${second.error.message}`);
   let retried = parsePlanJson(second.value.text);
   if (!retried.ok) {
     logPlan('validation', second.value.text, second.value.stopReason, retried.error.message);

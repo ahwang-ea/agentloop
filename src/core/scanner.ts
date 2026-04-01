@@ -8,6 +8,7 @@ const TEST = /(\.test|\.spec)\.[cm]?[jt]sx?$|_test\.py$/;
 const CI = [/^\.github\/workflows\//, /^\.gitlab-ci\.yml$/, /^\.circleci\/config\.ya?ml$/, /^azure-pipelines\.ya?ml$/];
 const IMPORT = /from\s+['"]([^'"]+)['"]|require\(['"]([^'"]+)['"]\)/g;
 const ENV = /process\.env\.([A-Z][A-Z0-9_]+)|import\.meta\.env\.([A-Z][A-Z0-9_]+)|os\.getenv\(['"]([A-Z][A-Z0-9_]+)['"]\)/g;
+const MAX_FILE_LINES = 150;
 const exists = (path: string) => stat(path).then(() => true).catch(() => false);
 const text = (path: string) => readFile(path, 'utf-8').catch(() => '');
 const packageOf = (packages: InventoryPackage[], file: string) => packages.filter(pkg => file === pkg.path || file.startsWith(`${pkg.path}/`)).sort((a, b) => b.path.length - a.path.length)[0];
@@ -91,7 +92,7 @@ export async function scanRepo(repoPath: string): Promise<Result<RepoInventory>>
         missingInExample: [...envRef].filter(name => !example.includes(name)).sort(),
         unusedInExample: [...new Set(example)].filter(name => !envRef.has(name)).sort(),
       },
-      oversizedFiles: files.filter(file => file.lines > 300).map(file => file.path).sort(),
+      oversizedFiles: files.filter(file => file.lines > MAX_FILE_LINES).map(file => file.path).sort(),
       ci: paths.filter(path => CI.some(pattern => pattern.test(path))).sort(),
       importFrequency: [...importCounts].map(([path, importedBy]) => ({ path, importedBy })).sort((a, b) => b.importedBy - a.importedBy || a.path.localeCompare(b.path)),
     });

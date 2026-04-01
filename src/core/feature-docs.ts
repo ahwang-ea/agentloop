@@ -2,6 +2,7 @@ import { ok, err, type Result } from '../shared/result.js';
 import type { ClaudeAdapter, TaskDefinition } from '../types/index.js';
 import type { InventoryDelta } from './inventory-diff.js';
 import { runVerify } from './verifier.js';
+import { writeCurrentScope } from './scope-file.js';
 
 const docTask = (feature: string, delta: InventoryDelta): TaskDefinition => ({
   id: `feature-docs:${feature}`,
@@ -18,7 +19,9 @@ const docTask = (feature: string, delta: InventoryDelta): TaskDefinition => ({
 export async function refreshFeatureDocs(
   claude: ClaudeAdapter, verifyCommand: string, cwd: string, feature: string, delta: InventoryDelta,
 ): Promise<Result<void>> {
-  const session = await claude.startSession(docTask(feature, delta), cwd); if (!session.ok) return session;
+  const task = docTask(feature, delta);
+  const scope = await writeCurrentScope(cwd, task, 'docs'); if (!scope.ok) return scope;
+  const session = await claude.startSession(task, cwd); if (!session.ok) return session;
   const stopped = await claude.waitForStop(session.value); if (!stopped.ok) return stopped;
   if (!stopped.value.text.trim() && stopped.value.changedFiles.length === 0) return ok(undefined);
   const verify = await runVerify(verifyCommand, cwd);

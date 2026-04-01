@@ -7,6 +7,7 @@ import { withLease } from './lease.js';
 import { reviewPhase } from './review-loop.js';
 import { scaffoldTask } from './scaffold.js';
 import { commitAndMergeTask } from './task-merge.js';
+import { writeCurrentScope } from './scope-file.js';
 import { progressiveVerify } from './verifier.js';
 import { verifyLoop } from './verify-loop.js';
 import { runWriterCleanup, startWrite } from './writer.js';
@@ -31,6 +32,7 @@ export async function runTask(
     const progress = await d.queue.updateProgress(task.id, { branch, round: conv.rounds.length, convergence: conv }, token); if (!progress.ok) return progress;
   }
   const scaffolded = scaffold.ok ? scaffold.value : [];
+  const writeScope = await writeCurrentScope(worktreePath, task, 'write'); if (!writeScope.ok) return writeScope;
   let started = await withLease(() => startWrite(d, task, worktreePath, warmSession), () => d.queue.renewClaim(task.id, token));
   if (!started.ok && retryableStart(started.error.code, started.error.message)) {
     if (shouldLogWrite()) console.error(`[write] ${task.id} retrying initial write after ${started.error.code}: ${started.error.message}`);
@@ -51,6 +53,7 @@ export async function runTask(
     r = await reviewPhase(d, started.value.session, task, conv, t0, worktreePath, token, usage); if (!r.ok) return r;
   }
   s = await d.queue.updateStatus(task.id, 'cleanup', token); if (!s.ok) return s;
+  const cleanupScope = await writeCurrentScope(worktreePath, task, 'cleanup'); if (!cleanupScope.ok) return cleanupScope;
   const cleanup = await withLease(() => runWriterCleanup(d, started.value.session, task, worktreePath), () => d.queue.renewClaim(task.id, token));
   if (!cleanup.ok) return err(cleanup.error.code, cleanup.error.message);
   addTaskTokens(usage, cleanup.value.tokenEstimate);

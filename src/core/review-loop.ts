@@ -11,6 +11,7 @@ import type {
   TaskStatus,
 } from '../types/index.js';
 import { refreshLearnings } from './learnings.js';
+import { writeCurrentScope } from './scope-file.js';
 import { withLease } from './lease.js';
 import { logTaskMetrics, recordReviewFindings, recordSessionChanges } from './metrics.js';
 import { formatFixPrompt, resolveConflicts, runSequentialReviews } from './reviewer.js';
@@ -51,6 +52,7 @@ async function singleReviewPass(
   recordReviewFindings(conv, findings);
   const progress = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!progress.ok) return progress;
   const resolved = resolveConflicts(findings); if (!resolved.ok) return resolved as Result<never>;
+  const fixScope = await writeCurrentScope(cwd, task, 'fix'); if (!fixScope.ok) return fixScope as Result<never>;
   const fixing = await setStatus(d, task.id, 'fixing', token); if (!fixing.ok) return fixing as Result<never>;
   const fix = await withLease(() => runWriterFix(d, session, task, formatFixPrompt(resolved.value), cwd), () => d.queue.renewClaim(task.id, token));
   if (!fix.ok) return err(fix.error.code, fix.error.message);

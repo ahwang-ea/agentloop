@@ -6,11 +6,14 @@ import { writeInventory } from '../scanner.js';
 test('writes repo inventory with patterns, tests, and env mismatches', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'agentloop-scan-'));
   await mkdir(join(repo, 'src'), { recursive: true });
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => `export const line${index} = ${index};`).join('\n');
   await writeFile(join(repo, 'package.json'), JSON.stringify({ name: 'demo', dependencies: { jest: '^1.0.0' } }), 'utf-8');
   await writeFile(join(repo, '.env.example'), 'API_KEY=1\nUNUSED=1\n', 'utf-8');
   await writeFile(join(repo, 'src', 'orders.service.ts'), 'import { helper } from "./helper";\nconst x: Result<string> = ok("x");\nprocess.env.API_KEY;\n', 'utf-8');
   await writeFile(join(repo, 'src', 'helper.ts'), 'export const helper = 1;\n', 'utf-8');
   await writeFile(join(repo, 'src', 'orders.test.ts'), 'test("x", () => expect(true).toBe(true));\n', 'utf-8');
+  await writeFile(join(repo, 'src', 'limit.ts'), lines(150), 'utf-8');
+  await writeFile(join(repo, 'src', 'too-big.ts'), lines(151), 'utf-8');
   const result = await writeInventory(repo);
   expect(result.ok).toBe(true);
   if (!result.ok) return;
@@ -20,4 +23,5 @@ test('writes repo inventory with patterns, tests, and env mismatches', async () 
   expect(written.patterns.serviceFileCount).toBe(1);
   expect(written.importFrequency[0]?.path).toBe('src/helper.ts');
   expect(written.env.unusedInExample).toContain('UNUSED');
+  expect(written.oversizedFiles).toEqual(['src/too-big.ts']);
 });

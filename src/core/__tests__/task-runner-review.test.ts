@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { jest } from '@jest/globals';
@@ -44,6 +44,8 @@ test('fails initial write when codex and claude both change no files', async () 
   } as never, task, 'al/task-2', 'main', cwd, undefined, 'claim-token', undefined, { session: undefined, tokens: 0 }, false);
   expect(startSession).toHaveBeenCalled();
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'EMPTY_RESPONSE' }) });
+  const scope = JSON.parse(await readFile(join(cwd, '.agentloop', 'current-scope.json'), 'utf-8')) as Record<string, unknown>;
+  expect(scope).toEqual(expect.objectContaining({ version: 1, taskId: task.id, phase: 'write' }));
 });
 
 test('retries initial write once after a transient claude timeout', async () => {

@@ -97,8 +97,12 @@ export interface TaskMetricsStats {
   errors: string[];
   files: string[];
   timestamp: string;
+  taskType?: TaskType;
+  tokenTotal?: number;
+  verifyTimeSec?: number;
 }
 export interface MetricsRecord extends TaskMetricsStats {
+  version?: 2;
   task_id: string;
   task: string;
   outcome: MetricsOutcome;

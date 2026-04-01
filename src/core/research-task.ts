@@ -3,6 +3,7 @@ import type { AgentloopConfig, ClaudeAdapter, GitAdapter, NotifierAdapter, TaskD
 import { learningsAddendum, refreshLearnings } from './learnings.js';
 import { withLease } from './lease.js';
 import { logTaskMetrics } from './metrics.js';
+import { writeCurrentScope } from './scope-file.js';
 import { buildWritePrompt } from './writer-prompt.js';
 
 interface ResearchDeps {
@@ -31,6 +32,7 @@ export async function runResearchTask(
   d: ResearchDeps, task: TaskDefinition, branch: string, cwd: string, token: string,
 ): Promise<Result<void>> {
   const scopedTask = scoped(task), prompt = await promptOf(d.config.repoPath, scopedTask);
+  const scope = await writeCurrentScope(cwd, scopedTask, 'research'); if (!scope.ok) return scope;
   const session = await withLease(() => d.claude.startSession(scopedTask, cwd, undefined, prompt), () => d.queue.renewClaim(task.id, token));
   if (!session.ok) return session;
   const output = await withLease(() => d.claude.waitForStop(session.value), () => d.queue.renewClaim(task.id, token));
