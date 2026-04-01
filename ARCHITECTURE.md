@@ -200,6 +200,32 @@ Quality of guidance affects round count, not correctness of process.
 - Feature branch parallelism: 3-4 features each with own agent.
 - Minimum context loading: fewer tokens = smarter reasoning = fewer rounds.
 
+### Agent parallelism patterns
+Whether using Claude Code agent teams, Codex subagents, or agentloop workers,
+the coordination pattern is the same:
+- Types and interfaces first. The lead defines contracts. Agents implement
+  against them. The interface IS the coordination mechanism.
+- One agent = one concern = distinct files. Two agents on the same file = merge
+  conflicts = wasted time. If they need the same file, split it.
+- Match model to task. Cheap/fast for exploration and search. Expensive for
+  planning and architecture review. Mid-tier for implementation.
+- Read-only for exploration. Only implementation agents write files.
+- Repo files (AGENTS.md, ARCHITECTURE.md) are shared context loaded
+  automatically. That's the coordination layer, not messages between agents.
+
+### Test isolation (enables parallel tests AND parallel agents)
+Tests MUST run in parallel (jest --maxWorkers=100%). If they can't, the code
+has hidden shared state — fix the code, not the test runner.
+- No shared database — each test creates its own in-memory DB or unique name
+- No shared files — use mkdtemp for unique temp dirs, clean up in afterEach
+- No shared ports — use port 0 (OS picks a free port), never hardcode
+- No shared env vars — restore in afterEach, or inject config as parameter
+- No test ordering — if B fails when A doesn't run first, B is broken
+- No shared mocks — fresh mocks per test, restoreAllMocks in afterEach
+- Deterministic — seed randomness, flaky tests train agents to ignore failures
+- Fast — each test under 1 second. Network/API tests are integration tests
+  (merge only via progressive verify, not every iteration)
+
 ### Alignment
 - Contrast-based options: show 2-3 concrete behaviors, human picks in 2 seconds.
 - Incremental delivery: types first → approve → implement → approve.
@@ -625,3 +651,6 @@ Future: verify.sh should check doc freshness — behavior change without doc upd
 | 2026-03-30 | Session cap: 3 tasks or 100k tokens | Warm sessions degrade IQ per Axiom 14. Fresh session prevents context garbage. |
 | 2026-03-30 | Error output truncation: 50+10 lines | Full test output tanks reasoning. First error is root cause. Truncate the rest. |
 | 2026-03-30 | Codex hooks weaker than Claude hooks | Codex PreToolUse only fires on Bash, not file edits. Compensate with orchestrator-level scope check. |
+| 2026-04-01 | Tests must run in parallel | jest --maxWorkers=100%. If tests can't run in parallel, the code has shared state — fix the code. |
+| 2026-04-01 | Test isolation rules | No shared DB, files, ports, env vars, mocks. mkdtemp, port 0, in-memory DB, restoreAllMocks. |
+| 2026-04-01 | Agent parallelism via interfaces | Types first as coordination contract. One agent = one concern = distinct files. Model matching per task. |

@@ -36,6 +36,23 @@ git CLI, @slack/webhook. Zero other runtime dependencies.
 - Additive-only changes to persisted formats by default. Never remove or
   rename a field without a migration.
 
+## Test conventions
+Tests must run in parallel (jest --maxWorkers=100%). If they can't,
+the code has hidden shared state — fix the code, not the test runner.
+- Each test creates its own deps. No shared mutable state between tests.
+- No shared database, files, ports, env vars, or mocks across tests.
+- Use mkdtemp for temp files, port 0 for servers, in-memory DBs.
+- Clean up in afterEach. restoreAllMocks in afterEach.
+- Each test under 1 second. Network/API = integration test (merge only).
+- Deterministic: seed randomness. Flaky = broken.
+
+## Parallelism patterns
+- Types and interfaces first — the contract IS the coordination mechanism
+- One agent = one concern = distinct files. Same file = merge conflicts.
+- Match model to task: cheap for search/exploration, expensive for planning
+- Read-only agents for exploration, write agents for implementation only
+- AGENTS.md and ARCHITECTURE.md are shared context — coordination lives there
+
 ## Patterns to follow
 - Types: domain in src/types/domain.ts, adapters in src/types/adapters.ts
 - Barrel: src/types/index.ts re-exports — import from './types/index.js'
