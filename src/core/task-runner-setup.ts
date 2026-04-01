@@ -28,7 +28,7 @@ export interface TaskRunState {
 }
 
 const shouldLogWrite = () => process.env.AGENTLOOP_LOG_WRITE === '1' || process.env.AGENTLOOP_LOG_VERIFY === '1';
-const retryableStart = (code: string, message: string) => code === 'SESSION_ERROR' || code === 'BUDGET_EXCEEDED' || /timed out|api error|overloaded|temporarily unavailable/i.test(message);
+const retryableStart = (code: string, message: string, details?: Record<string, unknown>) => details?.leaseRenewal !== true && (code === 'SESSION_ERROR' || code === 'BUDGET_EXCEEDED' || /timed out|api error|overloaded|temporarily unavailable/i.test(message));
 const newConvergence = (): ConvergenceState => ({ rounds: [], classification: 'unknown' as const, webSearchTriggered: false, reviewFindings: 0, errorTypes: [], changedFiles: [] });
 const saveProgress = (ctx: TaskRunContext, conv: ConvergenceState, branch?: string) => ctx.d.queue.updateProgress(
   ctx.task.id,
@@ -53,7 +53,7 @@ async function startInitialWrite(
   const writeScope = await writeCurrentScope(ctx.worktreePath, ctx.task, 'write');
   if (!writeScope.ok) return err(writeScope.error.code, writeScope.error.message, writeScope.error.details);
   let started = await withLease(() => startWrite(ctx.d, ctx.task, ctx.worktreePath, warmSession), () => ctx.d.queue.renewClaim(ctx.task.id, ctx.token));
-  if (!started.ok && retryableStart(started.error.code, started.error.message)) {
+  if (!started.ok && retryableStart(started.error.code, started.error.message, started.error.details)) {
     if (shouldLogWrite()) console.error(`[write] ${ctx.task.id} retrying initial write after ${started.error.code}: ${started.error.message}`);
     const reset = await ctx.d.git.revertFiles(concreteTargetsOf(ctx.task), ctx.worktreePath);
     if (!reset.ok) return err(reset.error.code, reset.error.message, reset.error.details);

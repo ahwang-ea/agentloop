@@ -27,7 +27,7 @@ test('returns renewal failures with details once the wrapped work completes', as
   await jest.advanceTimersByTimeAsync(6);
   pending.release();
   const result = await promise;
-  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_ERROR', message: 'renew failed', details }) });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_ERROR', message: 'renew failed', details: expect.objectContaining({ ...details, leaseRenewal: true }) }) });
 });
 
 test('converts thrown renewal errors into UNKNOWN results', async () => {
@@ -36,5 +36,5 @@ test('converts thrown renewal errors into UNKNOWN results', async () => {
   await jest.advanceTimersByTimeAsync(6);
   pending.release();
   const result = await promise;
-  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'UNKNOWN', message: 'renew boom' }) });
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'UNKNOWN', message: 'renew boom', details: expect.objectContaining({ leaseRenewal: true }) }) });
 });
