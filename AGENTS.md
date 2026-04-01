@@ -13,11 +13,11 @@ git CLI, @slack/webhook. Zero other runtime dependencies.
 
 ## Core principles
 - Axiom 18: if it must happen, it's code. Not a prompt, not prose.
-  Type system > hooks > lint > tests > verify.sh > orchestrator > prompts.
-- Axiom 19: every change to a running system is a migration. Additive-only
-  by default. Breaking changes need versioning or migration functions.
-- Axiom 20: blast radius discovery is a prerequisite. Before changing a
-  shared type or persisted format, trace all consumers and verify compatibility.
+- Axiom 19: every change is a migration. Additive-only by default.
+- Axiom 20: trace blast radius before changing shared types.
+- Axiom 21: touch metal. Verify external assumptions against reality.
+- Axiom 22: eliminate wasted work. Speed and accuracy are the same thing.
+  Exploit agent parallelism: shotgun, pipeline, speculative execution.
 
 ## Conventions
 - All functions that can fail return Result<T> (see src/shared/result.ts)

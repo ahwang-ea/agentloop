@@ -19,7 +19,7 @@ implements a subset. See PHASE2_HANDOFF.md for tasks that bridge the gap.
 - Zero runtime dependencies beyond the SDKs (claude-agent-sdk, openai, @slack/webhook).
 - TypeScript strict mode.
 
-## 20 Axioms of AI Agent Coding
+## 22 Axioms of AI Agent Coding
 
 1. Lazy/satisficing — multi-pass needed, never trust a single output
 2. Context quality = output quality — curate minimum correct context
@@ -31,16 +31,18 @@ implements a subset. See PHASE2_HANDOFF.md for tasks that bridge the gap.
 8. Small tasks >> big tasks — 1-3 files max per task
 9. Errors > instructions — pipe compiler/test output directly, not "please fix"
 10. Thrash after extended iterations — escalate, don't spin
-11. Maintenance is the product — without a loop to keep things fresh, clean, and correct, every system rots. The gardening loop IS the differentiator. Continuous tending, not end-of-task cleanup.
+11. Maintenance is the product — the gardening loop IS the differentiator. Continuous tending, not end-of-task cleanup.
 12. Frontloading structure eliminates rounds — types + tests first
 13. Three alignment levels — code vs plan, plan vs goals, goals vs human want
 14. IQ degrades non-linearly with context — maximize signal per token, prefer zero-context enforcement (types, tests, hooks) over prompt-based enforcement
-15. Agent-native over agent-accessible — don't just make things agents CAN use; structure everything to maximize the probability agents WILL use it correctly. Type errors > lint rules > prose. Prefer native. Fall back to accessible only when native is impossible.
-16. Graceful degradation — every subsystem defines its failure mode. No single subsystem failure halts the pipeline. If gardening fails, the system works at reduced capacity, not breaks.
+15. Agent-native over agent-accessible — structure everything to maximize the probability agents WILL use it correctly. Type errors > lint rules > prose. Prefer native. Fall back to accessible only when native is impossible.
+16. Graceful degradation — every subsystem defines its failure mode. No single subsystem failure halts the pipeline.
 17. Every primitive must scale agent-natively — every stateful artifact needs: max active size, archival trigger, retrieval path, and maintenance owner. If it can't define all four, it's not ready.
 18. If it must happen, it's code — prompt instructions are suggestions the agent may skip (Axiom 1). Critical invariants are code or tests. Hierarchy: type system > hooks > lint > tests > verify.sh > orchestrator > prompt > prose.
-19. Every change to a running system is a migration — agents see code, not history. They don't see the 6 months of state in the old format, the deployed configs, the running processes. No change to persisted state, interfaces, schemas, or configs is "just a refactor." Additive-only by default. Breaking changes require versioning, migration functions, or compatibility windows.
-20. Blast radius discovery is a prerequisite, not an afterthought — before any change to a shared interface or persisted type, the full impact must be traced: who imports it, what reads it, what state exists in the old format. Agents have the capability to trace this but won't unless the system makes it mandatory. Code-enforced via pre-merge inventory cross-reference.
+19. Every change to a running system is a migration — agents see code, not history. No change to persisted state, interfaces, schemas, or configs is "just a refactor." Additive-only by default. Breaking changes require versioning, migration functions, or compatibility windows.
+20. Blast radius discovery is a prerequisite — before any change to a shared interface or persisted type, trace the full impact: who imports it, what reads it, what state exists in the old format. Code-enforced via pre-merge inventory cross-reference.
+21. Touch metal — agents live in an abstraction bubble. Before depending on an external assumption (API shape, infra state, deployed config, production data format), verify against the real thing. Hit the endpoint. Query the database. Mocks are for tests; reality is for shipping.
+22. Eliminate wasted work — speed and accuracy are the same thing. Test-first → fewer rounds. Progressive verify → fail fast. Minimal context → better reasoning. Types → errors at compile time. If you're choosing between speed and correctness, the architecture is wrong. Exploit agent parallelism: shotgun execution (3 agents, first to pass, P≥97%), pipeline parallelism (plan N+1 while implementing N), speculative execution (start next during review). Trade tokens for time.
 
 ## Tech Stack
 - TypeScript 5.x, Node 20+
