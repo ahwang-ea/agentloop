@@ -1,13 +1,11 @@
 import { join } from 'node:path';
 import type { ClaimedActionableTask } from '../types/index.js';
 import { ok, err, type Result } from '../shared/result.js';
-import type { Deps } from '../orchestrator.js';
+import type { Deps, SharedState } from '../orchestrator.js';
 import { tryWithArtifactLock } from './artifact-lock.js';
 import { findDependencyFailures } from './dependency-deadlock.js';
 import { createWorkerState, handleClaim, notify, recordStuck } from './orchestrator-claim.js';
 import { architectSweep } from './sweep.js';
-
-interface SharedState { sweepCounter: number; sweep?: Promise<Result<void>>; }
 
 const pending = new Set(['queued', 'writing', 'verifying', 'reviewing', 'fixing', 'cleanup', 'merging', 'finalizing']);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

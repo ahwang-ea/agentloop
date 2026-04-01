@@ -23,6 +23,7 @@ export const DEFAULT_CONFIG: AgentloopConfig = {
   taskSource: 'file',
   taskFilePath: 'tasks.json',
   maxParallelAgents: 2,
+  shotgunAgents: 1,
   maxTasksPerSession: 3,
   maxTokensPerSession: 100000,
   parallelVerify: true,
@@ -80,7 +81,7 @@ export async function loadConfig(path?: string): Promise<Result<AgentloopConfig>
       const checked = ensureBoolean(path, field, raw[field]);
       if (!checked.ok) return checked;
     }
-    for (const [field, min] of [['maxParallelAgents', 1], ['maxTasksPerSession', 1], ['maxTokensPerSession', 1], ['sweepInterval', 0]] as const) {
+    for (const [field, min] of [['maxParallelAgents', 1], ['shotgunAgents', 1], ['maxTasksPerSession', 1], ['maxTokensPerSession', 1], ['sweepInterval', 0]] as const) {
       const checked = ensureInteger(path, field, raw[field], min);
       if (!checked.ok) return checked;
     }

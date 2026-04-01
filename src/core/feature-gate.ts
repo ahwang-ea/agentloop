@@ -1,6 +1,9 @@
-import { ok, type Result } from '../shared/result.js';
+import { stat } from 'node:fs/promises';
+import { err, ok, type Result } from '../shared/result.js';
 import type { AgentloopConfig, ClaudeAdapter, CodexAdapter, FinalizationState, GitAdapter, NotifierAdapter, TaskDefinition, TaskQueueAdapter } from '../types/index.js';
-import { formatFixPrompt, resolveConflicts, runSequentialReviews } from './reviewer.js';
+import { buildBlastRadiusContext } from './blast-radius.js';
+import { runDeterministicChecks } from './review-concerns.js';
+import { formatFixPrompt, resolveConflicts, runParallelReviews } from './reviewer.js';
 import { remainingFeatureTasks } from './feature.js';
 import { refreshFeatureDocs } from './feature-docs.js';
 import { mergeFeatureAtomically } from './feature-merge.js';
@@ -19,7 +22,17 @@ interface FeatureDeps {
 }
 
 const docsChanged = (diff: string) => /^\+\+\+ b\/(AGENTS|ARCHITECTURE)\.md$/m.test(diff);
-const gateTask = (task: TaskDefinition): TaskDefinition => ({ ...task, title: `Feature gate: ${task.feature ?? task.title}`, acceptanceCriteria: ['Feature diff is coherent and correct.'] });
+const gateTask = (task: TaskDefinition, context = ''): TaskDefinition => ({ ...task, title: `Feature gate: ${task.feature ?? task.title}`, description: [task.description, context].filter(Boolean).join('\n\n'), acceptanceCriteria: ['Feature diff is coherent and correct.'] });
+
+async function featureGateWorktree(config: Pick<AgentloopConfig, 'branchPrefix' | 'repoPath' | 'worktreeRoot'>, branch: string): Promise<Result<string>> {
+  const cwd = worktreePathForBranch(config, branch);
+  try {
+    const info = await stat(cwd);
+    return info.isDirectory() ? ok(cwd) : err('TRANSPORT_ERROR', `Feature gate worktree is not a directory: ${cwd}`);
+  } catch (error) {
+    return err('TRANSPORT_ERROR', `Feature gate worktree missing: ${cwd}${error instanceof Error ? ` (${error.message})` : ''}`);
+  }
+}
 
 export async function prepareFeatureFinalization(
   d: FeatureDeps, task: TaskDefinition, fin: FinalizationState, token: string,
@@ -38,9 +51,14 @@ export async function prepareFeatureFinalization(
   const base = await d.git.checkoutBase(d.config.baseBranch); if (!base.ok) return base;
   const before = await scanRepo(base.value); if (!before.ok) return before;
   const diff = await d.git.getDiff(d.config.baseBranch, fin.featureBranch ?? fin.mergeInto); if (!diff.ok) return diff;
+  const cwd = await featureGateWorktree(d.config, fin.featureBranch ?? fin.mergeInto); if (!cwd.ok) return cwd;
   if (!d.config.autoApproveFeatures) {
-    const reviews = await runSequentialReviews(d, gateTask(task), diff.value); if (!reviews.ok) return reviews;
-    const resolved = resolveConflicts(reviews.value.flatMap(review => review.findings));
+    const blast = await buildBlastRadiusContext(diff.value, cwd.value); if (!blast.ok) return blast;
+    const gated = gateTask(task, blast.value);
+    const [reviews, deterministic] = await Promise.all([runParallelReviews(d, gated, diff.value), runDeterministicChecks(cwd.value, diff.value, gated.description)]);
+    if (!reviews.ok) return reviews;
+    if (!deterministic.ok) return deterministic;
+    const resolved = resolveConflicts([...reviews.value.flatMap(review => review.findings), ...deterministic.value]);
     if (!resolved.ok) {
       const blocked = await d.queue.markBlocked(task.id, resolved.error.message, resolved.error.details ?? {}, token);
       return blocked.ok ? ok('done') : blocked;
@@ -50,7 +68,7 @@ export async function prepareFeatureFinalization(
       return blocked.ok ? ok('done') : blocked;
     }
   }
-  const after = await scanRepo(worktreePathForBranch(d.config, fin.featureBranch ?? fin.mergeInto)); if (!after.ok) return after;
+  const after = await scanRepo(cwd.value); if (!after.ok) return after;
   const delta = diffInventories(before.value, after.value), updateDocs = needsArchitectureUpdate(delta) && !docsChanged(diff.value);
   const baseline = await ensureIntentBaseline(d.config.repoPath, before.value); if (!baseline.ok) return baseline;
   if (d.config.autoApproveFeatures) fin.approved = true;

@@ -44,6 +44,7 @@ export const metricsFromTaskState = (state: TaskState): TaskMetricsStats => {
     taskType: state.task.type,
     tokenTotal: roundTotal(conv, 'tokens'),
     verifyTimeSec: roundTotal(conv, 'elapsed'),
+    shotgunWinner: conv?.shotgunWinner,
   };
 };
 
@@ -72,6 +73,7 @@ export async function logMetrics(
     taskType: stats.taskType ?? task.type,
     tokenTotal: stats.tokenTotal ?? 0,
     verifyTimeSec: stats.verifyTimeSec ?? 0,
+    shotgunWinner: stats.shotgunWinner,
   };
   return withArtifactLock(path, 'metrics', async () => {
     try {
@@ -87,6 +89,8 @@ export async function logMetrics(
         taskType: undefined,
         tokenTotal: undefined,
         verifyTimeSec: undefined,
+        shotgun_winner: record.shotgunWinner,
+        shotgunWinner: undefined,
       })}\n`, 'utf-8');
       return ok(undefined);
     } catch (e) {

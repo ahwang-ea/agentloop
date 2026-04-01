@@ -8,6 +8,7 @@ import { refreshLearnings } from './learnings.js';
 import { logTaskMetrics } from './metrics.js';
 import { runResearchTask } from './research-task.js';
 import { emptyWarmSession, newTaskUsage, pickWarmSession, recordWarmSession, type WarmSessionState } from './session-budget.js';
+import { shotgunExecute } from './shotgun.js';
 import { mergeCommittedBranch } from './task-merge.js';
 import { runTask } from './task-runner.js';
 import { taskBranchName, worktreePathForBranch } from './worktree.js';
@@ -86,10 +87,13 @@ export async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worke
   if (!progress.ok) return progress;
   if (state.status === 'merging') return mergeCommittedBranch(d.git, d.queue, state.task, branch, base, claimToken).then(result => result.ok ? ok(true) : result);
   if (state.task.type === 'research') return runResearchTask(d, state.task, branch, worktreePath, claimToken).then(result => result.ok ? ok(false) : result);
-  const usage = newTaskUsage(), warm = state.task.type === 'integrate' ? undefined : pickWarmSession(worker.warm, state.task.feature);
   const taskDeps = { ...d, config: { ...d.config, useCodexWriter } };
-  const result = await runTask(taskDeps, state.task, branch, base, worktreePath, state.convergence, claimToken, warm, usage, !state.branch);
-  worker.warm = result.ok && state.task.type === 'implement'
+  const shotgunAgents = d.config.shotgunAgents ?? 1;
+  const usage = newTaskUsage(), warm = state.task.type === 'integrate' ? undefined : pickWarmSession(worker.warm, state.task.feature);
+  const result = !state.branch && state.task.type === 'implement' && shotgunAgents > 1
+    ? await shotgunExecute(taskDeps, state.task, branch, base, worktreePath, claimToken, shotgunAgents, state.convergence)
+    : await runTask(taskDeps, state.task, branch, base, worktreePath, state.convergence, claimToken, warm, usage, !state.branch);
+  worker.warm = result.ok && state.task.type === 'implement' && shotgunAgents <= 1
     ? recordWarmSession(worker.warm, state.task.feature, usage.session, usage.tokens, d.config)
     : emptyWarmSession();
   if (result.ok) return ok(true);

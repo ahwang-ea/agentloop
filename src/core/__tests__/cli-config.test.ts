@@ -24,10 +24,24 @@ test('loadConfig rejects unsupported parallelVerify=false', async () => {
 });
 
 test('loadConfig rejects invalid numeric semantics', async () => {
-  const loaded = await loadConfig(await configPath({ maxParallelAgents: 0, sweepInterval: -1 }));
+  const loaded = await loadConfig(await configPath({ maxParallelAgents: 0, shotgunAgents: 0, sweepInterval: -1 }));
   expect(loaded.ok).toBe(false);
   if (loaded.ok) return;
   expect(loaded.error.message).toContain('maxParallelAgents');
+});
+
+test('loadConfig rejects shotgunAgents below one in isolation', async () => {
+  const loaded = await loadConfig(await configPath({ shotgunAgents: 0 }));
+  expect(loaded.ok).toBe(false);
+  if (loaded.ok) return;
+  expect(loaded.error.message).toContain('shotgunAgents');
+});
+
+test('loadConfig accepts explicit shotgunAgents', async () => {
+  const loaded = await loadConfig(await configPath({ shotgunAgents: 3 }));
+  expect(loaded.ok).toBe(true);
+  if (!loaded.ok) return;
+  expect(loaded.value.shotgunAgents).toBe(3);
 });
 
 test('loadConfig requires linear credentials for linear task sources', async () => {

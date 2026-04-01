@@ -14,7 +14,8 @@ import { refreshLearnings } from './learnings.js';
 import { writeCurrentScope } from './scope-file.js';
 import { withLease } from './lease.js';
 import { logTaskMetrics, recordReviewFindings, recordSessionChanges } from './metrics.js';
-import { formatFixPrompt, resolveConflicts, runSequentialReviews } from './reviewer.js';
+import { runDeterministicChecks } from './review-concerns.js';
+import { formatFixPrompt, resolveConflicts, runParallelReviews } from './reviewer.js';
 import { elapsedSeconds, systemRuntime, type RuntimeDeps } from './runtime.js';
 import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { verifyLoop, type VerifyDeps } from './verify-loop.js';
@@ -56,8 +57,10 @@ async function singleReviewPass(
   runtime: ReviewRuntime,
 ): Promise<Result<ReviewPass>> {
   const diff = await d.git.getDiff(d.config.baseBranch, undefined, cwd); if (!diff.ok) return err(diff.error.code, diff.error.message);
-  const reviews = await runSequentialReviews(d, task, diff.value); if (!reviews.ok) return err(reviews.error.code, reviews.error.message);
-  const findings = reviews.value.flatMap(review => review.findings);
+  const [reviews, deterministic] = await Promise.all([runParallelReviews(d, task, diff.value), runDeterministicChecks(cwd, diff.value, task.description)]);
+  if (!reviews.ok) return err(reviews.error.code, reviews.error.message);
+  if (!deterministic.ok) return err(deterministic.error.code, deterministic.error.message, deterministic.error.details);
+  const findings = [...reviews.value.flatMap(review => review.findings), ...deterministic.value];
   if (findings.length === 0) return ok({ count: 0, hashes: [] });
   recordReviewFindings(conv, findings);
   const progress = await d.queue.updateProgress(task.id, { round: conv.rounds.length, convergence: conv }, token); if (!progress.ok) return progress;

@@ -6,6 +6,7 @@ import { addTaskTokens, type TaskUsage } from './session-budget.js';
 import { withLease } from './lease.js';
 import { reviewPhase } from './review-loop.js';
 import { scaffoldTask } from './scaffold.js';
+import { consumeStagedScaffold } from './scaffold-stage.js';
 import { writeCurrentScope } from './scope-file.js';
 import { verifyLoop } from './verify-loop.js';
 import { startWrite, type StartedWrite } from './writer.js';
@@ -38,6 +39,15 @@ const saveProgress = (ctx: TaskRunContext, conv: ConvergenceState, branch?: stri
 );
 
 async function scaffoldFiles(ctx: TaskRunContext, conv: ConvergenceState, shouldScaffold: boolean): Promise<Result<string[]>> {
+  if (!shouldScaffold) return ok([]);
+  const staged = ctx.d.config.repoPath
+    ? await consumeStagedScaffold(ctx.d.config.repoPath, ctx.task.id, ctx.worktreePath)
+    : ok<string[] | undefined>(undefined);
+  if (staged.ok && staged.value) return ok(staged.value);
+  if (!staged.ok) {
+    recordErrorType(conv, `staged scaffold ${staged.error.message}`);
+    console.error(`Staged scaffold skipped: ${staged.error.message}`);
+  }
   const scaffold = shouldScaffold
     ? await withLease(() => scaffoldTask(ctx.d.claude, ctx.task, ctx.worktreePath), () => ctx.d.queue.renewClaim(ctx.task.id, ctx.token))
     : ok<string[]>([]);

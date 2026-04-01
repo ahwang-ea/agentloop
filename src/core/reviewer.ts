@@ -26,7 +26,7 @@ async function readOptional(path?: string): Promise<Result<string>> {
   }
 }
 
-export async function runSequentialReviews(
+export async function runParallelReviews(
   deps: ReviewDeps, task: TaskDefinition, diff: string,
 ): Promise<Result<ReviewResult[]>> {
   if (!deps.config.codexEnabled) return err('CONFIG_ERROR', 'Codex + Opus review is required by ARCHITECTURE.md');
@@ -44,6 +44,27 @@ export async function runSequentialReviews(
   if (!sweep.ok) return err(sweep.error.code, `Review failed: ${sweep.error.message}`);
   if (!sweep.value.rawOutput.trim()) return err('EMPTY_RESPONSE', `Review adapter returned blank output for ${sweep.value.reviewer}`);
   return ok([detail.value, sweep.value]);
+}
+
+const reviewerPriority: Record<ReviewFinding['reviewer'], number> = { 'deterministic-check': 3, 'codex-detail': 2, 'opus-bigpicture': 1 };
+const sameConcern = (a: ReviewFinding, b: ReviewFinding) => a.topicKey != null || b.topicKey != null
+  ? a.topicKey != null && b.topicKey != null && a.topicKey === b.topicKey && a.action === b.action
+  : textOverlap(a.description, b.description) >= 0.65;
+const prefer = (a: ReviewFinding, b: ReviewFinding) => {
+  const priority = reviewerPriority[a.reviewer] - reviewerPriority[b.reviewer];
+  if (priority !== 0) return priority > 0 ? a : b;
+  const located = Number((a.file ? 1 : 0) + (a.line != null ? 1 : 0)) - Number((b.file ? 1 : 0) + (b.line != null ? 1 : 0));
+  if (located !== 0) return located > 0 ? a : b;
+  return a.description.length >= b.description.length ? a : b;
+};
+
+function dedupe(findings: ReviewFinding[]): ReviewFinding[] {
+  return findings.reduce<ReviewFinding[]>((acc, finding) => {
+    const index = acc.findIndex(existing => sameConcern(existing, finding) && (!existing.file || !finding.file || areNearby(existing, finding) || existing.file === finding.file));
+    if (index < 0) return [...acc, finding];
+    acc[index] = prefer(acc[index], finding);
+    return acc;
+  }, []);
 }
 
 export function formatFixPrompt(findings: ReviewFinding[]): string {
@@ -82,15 +103,15 @@ export function resolveConflicts(findings: ReviewFinding[]): Result<ReviewFindin
     separate.push([...merged.flat(), f]);
     groups.length = 0; groups.push(...separate);
   }
-  const resolved: ReviewFinding[] = [...unlocated];
+  const resolved: ReviewFinding[] = dedupe(unlocated);
   for (const group of groups) {
-    if (new Set(group.map(f => f.reviewer)).size <= 1) { resolved.push(...group); continue; }
+    if (new Set(group.map(f => f.reviewer)).size <= 1) { resolved.push(...dedupe(group)); continue; }
     for (let i = 0; i < group.length; i++) {
       for (let j = i + 1; j < group.length; j++) {
         if (isConflict(group[i], group[j])) return err('REVIEW_CONFLICT', `Conflicting near ${group[i].file}:${group[i].line}: [${group[i].reviewer}] ${group[i].description} vs [${group[j].reviewer}] ${group[j].description}`, { findings: [group[i], group[j]] });
       }
     }
-    resolved.push(...group);
+    resolved.push(...dedupe(group));
   }
   return ok(resolved);
 }

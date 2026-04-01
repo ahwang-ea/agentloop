@@ -1,4 +1,5 @@
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { copyFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { err, ok, type Result } from '../shared/result.js';
 import { writeStderr } from '../shared/stderr.js';
@@ -69,12 +70,12 @@ function safePath(root: string, path: string): Result<string> {
   const full = resolve(root, path), rel = relative(root, full);
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? ok(full) : err('SESSION_ERROR', `Scaffold path escapes worktree: ${path}`);
 }
-async function applyFile(root: string, file: ScaffoldFile): Promise<Result<string>> {
-  const dest = safePath(root, file.path); if (!dest.ok) return dest;
+async function applyFile(sourceRoot: string, destRoot: string, file: ScaffoldFile): Promise<Result<string>> {
+  const dest = safePath(destRoot, file.path); if (!dest.ok) return dest;
   try {
     await mkdir(dirname(dest.value), { recursive: true });
     if (file.type === 'golden-copy') {
-      const src = safePath(root, file.referencePath); if (!src.ok) return src;
+      const src = safePath(sourceRoot, file.referencePath); if (!src.ok) return src;
       await copyFile(src.value, dest.value);
     } else await writeFile(dest.value, file.content, 'utf-8');
     return ok(file.path);
@@ -83,14 +84,23 @@ async function applyFile(root: string, file: ScaffoldFile): Promise<Result<strin
     return err('TRANSPORT_ERROR', `Cannot write scaffold file ${file.path}: ${message}`);
   }
 }
-export async function applyScaffold(cwd: string, scaffold: ScaffoldOutput): Promise<Result<string[]>> {
+async function applyScaffoldTo(sourceRoot: string, destRoot: string, scaffold: ScaffoldOutput): Promise<Result<string[]>> {
   const written: string[] = [];
   for (const file of scaffold.files) {
-    const applied = await applyFile(cwd, file); if (!applied.ok) return applied;
+    const applied = await applyFile(sourceRoot, destRoot, file); if (!applied.ok) return applied;
     written.push(applied.value);
   }
   return ok(written);
 }
+export async function applyScaffold(cwd: string, scaffold: ScaffoldOutput): Promise<Result<string[]>> {
+  return applyScaffoldTo(cwd, cwd, scaffold);
+}
+
+function repoRootFromStage(stagingDir: string): Result<string> {
+  const marker = `${resolve(stagingDir).replace(/\\/g, '/')}`.lastIndexOf('/.agentloop/scaffolds/');
+  return marker >= 0 ? ok(resolve(stagingDir).slice(0, marker)) : err('CONFIG_ERROR', `Scaffold staging dir must live under .agentloop/scaffolds: ${stagingDir}`);
+}
+const tempStageDir = (stagingDir: string) => `${stagingDir}.${randomUUID()}.tmp`;
 
 export async function scaffoldTask(
   claude: Pick<ClaudeAdapter, 'scaffold'>, task: TaskDefinition, cwd: string,
@@ -103,4 +113,34 @@ export async function scaffoldTask(
     return false;
   });
   return applyScaffold(cwd, { files: filtered });
+}
+
+export async function preGenerateScaffold(
+  claude: Pick<ClaudeAdapter, 'scaffold'>, task: TaskDefinition, stagingDir: string,
+): Promise<Result<string[]>> {
+  const root = repoRootFromStage(stagingDir); if (!root.ok) return root;
+  const scaffold = await claude.scaffold(task); if (!scaffold.ok) return scaffold;
+  const filtered = scaffold.value.files.filter(file => {
+    if (inScope(file.path, task)) return true;
+    writeStderr(`Pre-generated scaffold skipped out-of-scope file: ${file.path}`);
+    return false;
+  });
+  if (filtered.length === 0) {
+    try { await rm(stagingDir, { recursive: true, force: true }); return ok([]); } catch (error) {
+      return err('TRANSPORT_ERROR', `Cannot clear scaffold stage for ${task.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+  const tempDir = tempStageDir(stagingDir), staged = await applyScaffoldTo(root.value, tempDir, { files: filtered });
+  if (!staged.ok) {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    return staged;
+  }
+  try {
+    await rm(stagingDir, { recursive: true, force: true });
+    await rename(tempDir, stagingDir);
+    return staged;
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    return err('TRANSPORT_ERROR', `Cannot publish scaffold stage for ${task.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+  }
 }

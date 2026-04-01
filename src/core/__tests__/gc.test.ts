@@ -1,11 +1,16 @@
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { promisify } from 'node:util';
 import { jest } from '@jest/globals';
 import { archiveOldTasks, gc } from '../gc.js';
+import { removeStaleShotgunWorktrees } from '../gc-worktrees.js';
 import { pruneNotificationKeys } from '../notifier.js';
 
+const exec = promisify(execFile);
 const repo = () => mkdtemp(join(tmpdir(), 'agentloop-gc-'));
+const run = (cwd: string, ...args: string[]) => exec('git', args, { cwd });
 const config = (repoPath: string) => ({
   repoPath,
   baseBranch: 'main',
@@ -18,7 +23,20 @@ const config = (repoPath: string) => ({
   convergence: { maxWallClock: 1, maxTokens: 1, stuckThreshold: 1, thrashOverlapRatio: 0.5 },
   taskSource: 'file' as const, taskFilePath: 'tasks.json', maxParallelAgents: 2, maxTasksPerSession: 3, maxTokensPerSession: 100000, parallelVerify: true, sweepInterval: 1,
 });
+const worktreeConfig = (repoPath: string) => ({ ...config(repoPath), worktreeRoot: `${repoPath}.worktrees` });
 const task = { id: 't', title: 'Task', description: '', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], type: 'implement' as const, priority: 'medium' as const, createdAt: '' };
+const gitRepo = async () => {
+  const repoPath = await repo();
+  await run(repoPath, 'init', '-b', 'main'); await run(repoPath, 'config', 'user.email', 'test@agentloop.local'); await run(repoPath, 'config', 'user.name', 'agentloop-test');
+  await writeFile(join(repoPath, 'README.md'), '# test\n'); await run(repoPath, 'add', '.'); await run(repoPath, 'commit', '-m', 'init');
+  return repoPath;
+};
+const fakeWorktree = async (repoPath: string, branch: string, when: number) => {
+  const path = join(`${repoPath}.worktrees`, basename(repoPath), branch);
+  await mkdir(join(path, '.git'), { recursive: true }); await utimes(path, when / 1000, when / 1000);
+  return path;
+};
+const present = (path: string) => stat(path).then(() => true).catch(() => false);
 
 test('keeps legacy notification keys untouched during pruning', async () => {
   const repoPath = await repo(), path = join(repoPath, '.agentloop', 'notifications.json');
@@ -90,4 +108,18 @@ test('rotates stale metrics logs during gc', async () => {
   expect(await readFile(metrics, 'utf-8')).toBe('');
   expect(await stat(join(repoPath, '.agentloop', 'metrics-archive', archivedName)).then(() => true)).toBe(true);
   error.mockRestore();
+});
+
+test('removes only stale inactive true shotgun worktrees', async () => {
+  const now = Date.parse('2026-04-01T12:00:00.000Z'), repoPath = await gitRepo(), cfg = worktreeConfig(repoPath);
+  const staleShot = await fakeWorktree(repoPath, 'al/task-shot-2', now - (2 * 60 * 60 * 1000));
+  const falseHit = await fakeWorktree(repoPath, 'al/fix-shot-bug-abc12345', now - (2 * 60 * 60 * 1000));
+  const result = await removeStaleShotgunWorktrees(cfg, { list: async () => ({ ok: true, value: [] }) } as never, now);
+  expect(result.ok).toBe(true); expect(await present(staleShot)).toBe(false); expect(await present(falseHit)).toBe(true);
+});
+
+test('keeps active stale shotgun worktrees from queue state', async () => {
+  const now = Date.parse('2026-04-01T12:00:00.000Z'), repoPath = await gitRepo(), cfg = worktreeConfig(repoPath), staleShot = await fakeWorktree(repoPath, 'al/task-shot-2', now - (2 * 60 * 60 * 1000));
+  const result = await removeStaleShotgunWorktrees(cfg, { list: async () => ({ ok: true, value: [{ task, status: 'finalizing', round: 0, startedAt: '', finalization: { mergeCommit: 'abc', branch: 'al/task-shot-2', mergeInto: 'main', behaviorNotified: false, readmeTaskEnsured: false, completionNotified: false, rebaseDone: false, failCount: 0 } }] }) } as never, now);
+  expect(result.ok).toBe(true); expect(await present(staleShot)).toBe(true);
 });
