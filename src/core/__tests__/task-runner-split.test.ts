@@ -68,7 +68,6 @@ test('runTaskSetup records scaffold failures before continuing', async () => {
   expect(statuses).toEqual(['verifying', 'reviewing']);
 });
 
-
 test('runTaskSetup propagates scaffold progress failures', async () => {
   const d = ctx([]) as any;
   scaffoldTask.mockResolvedValueOnce(err('SESSION_ERROR', 'bad scaffold')); d.d.queue.updateProgress = async () => queueError('scaffold progress failed'); jest.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -101,15 +100,16 @@ test('finishTaskRun propagates cleanup scope failures', async () => {
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'TRANSPORT_ERROR', message: 'cleanup scope failed' }) }); expect(runWriterCleanup).not.toHaveBeenCalled();
 });
 
-test('finishTaskRun propagates cleanup writer and verify failures', async () => {
+test('finishTaskRun propagates cleanup writer failures and skips cleanup verify loop', async () => {
   runWriterCleanup.mockResolvedValueOnce(err('SESSION_ERROR', 'cleanup failed'));
   let result = await finishTaskRun(ctx([]) as any, state());
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_ERROR', message: 'cleanup failed' }) }); expect(progressiveVerify).not.toHaveBeenCalled();
-  runWriterCleanup.mockResolvedValueOnce(ok(writerOutput('cleanup', ['src/result.ts'], 3))); verifyLoop.mockResolvedValueOnce(err('VERIFY_FAILED', 'cleanup verify failed'));
-  result = await finishTaskRun(ctx([]) as any, state());
-  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'VERIFY_FAILED', message: 'cleanup verify failed' }) }); expect(commitAndMergeTask).not.toHaveBeenCalled();
+  const statuses: string[] = [];
+  runWriterCleanup.mockResolvedValueOnce(ok(writerOutput('cleanup', ['src/result.ts'], 3)));
+  result = await finishTaskRun(ctx(statuses) as any, { ...state(), conv: { ...conv(), changedFiles: ['src/initial.ts'] } });
+  expect(result.ok).toBe(true); expect(verifyLoop).not.toHaveBeenCalled(); expect(statuses).toEqual(['cleanup', 'verifying', 'merging']);
+  expect(progressiveVerify).toHaveBeenLastCalledWith(expect.anything(), ['src/initial.ts', 'src/result.ts'], '/tmp/agentloop-task-runner', true, 'implement');
 });
-
 
 test('finishTaskRun preserves cleanup failure details', async () => {
   const details = { phase: 'cleanup' };
@@ -126,11 +126,8 @@ test('finishTaskRun propagates cleanup progress and final verify failures', asyn
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'VERIFY_FAILED', message: 'verify crashed' }) }); expect(commitAndMergeTask).not.toHaveBeenCalled();
 });
 
-test('finishTaskRun blocks merge on verify failure and reaches merge after cleanup verify', async () => {
+test('finishTaskRun blocks merge on final verify failure', async () => {
   progressiveVerify.mockResolvedValueOnce(ok(verifyResult(false, [{ source: 'test', message: 'broken test', hash: 'err-1' }])));
-  let result = await finishTaskRun(ctx([]) as any, state());
+  const result = await finishTaskRun(ctx([]) as any, state());
   expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'VERIFY_FAILED', message: 'Final verify failed before merge' }) }); expect(commitAndMergeTask).not.toHaveBeenCalled();
-  runWriterCleanup.mockResolvedValueOnce(ok(writerOutput('cleanup', ['src/result.ts'], 3))); result = await finishTaskRun(ctx([]) as any, state());
-  expect(result.ok).toBe(true); expect(verifyLoop).toHaveBeenCalledWith(expect.anything(), { id: 'session-1', taskId: 'task-1' }, task, 3, ['src/result.ts'], expect.anything(), 1, '/tmp/agentloop-task-runner', 'claim-token', expect.objectContaining({ tokens: 3 }));
-  expect(commitAndMergeTask).toHaveBeenCalledWith(expect.anything(), expect.anything(), task, 'al/task-1', 'main', 'claim-token', 'feat: Define result type');
 });

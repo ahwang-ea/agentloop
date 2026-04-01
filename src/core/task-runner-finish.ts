@@ -6,7 +6,6 @@ import { commitAndMergeTask } from './task-merge.js';
 import type { TaskRunContext, TaskRunState } from './task-runner-setup.js';
 import { writeCurrentScope } from './scope-file.js';
 import { progressiveVerify } from './verifier.js';
-import { verifyLoop } from './verify-loop.js';
 import { runWriterCleanup } from './writer.js';
 
 const shouldLogVerify = () => process.env.AGENTLOOP_LOG_VERIFY === '1';
@@ -33,11 +32,6 @@ export async function finishTaskRun(ctx: TaskRunContext, state: TaskRunState): P
   if (cleanup.value.changedFiles.length > 0) {
     const verifying = await ctx.d.queue.updateStatus(ctx.task.id, 'verifying', ctx.token);
     if (!verifying.ok) return err(verifying.error.code, verifying.error.message, verifying.error.details);
-    const verified = await verifyLoop(
-      ctx.d, state.started.session, ctx.task, cleanup.value.tokenEstimate,
-      cleanup.value.changedFiles, state.conv, state.t0, ctx.worktreePath, ctx.token, ctx.usage,
-    );
-    if (!verified.ok) return err(verified.error.code, verified.error.message, verified.error.details);
   }
   const finalVerify = await withLease(
     () => progressiveVerify(ctx.d.config, state.conv.changedFiles, ctx.worktreePath, true, ctx.task.type),

@@ -60,7 +60,9 @@ export async function runCodexFix(d: WriterDeps, session: ClaudeSession | undefi
   if (!session || output.error.code === 'CONFIG_ERROR') return output;
   return enforceWriterOutput(d, task, cwd, await d.claude.fix(session, `${prompt}\n\nPrevious Codex fix attempt failed: ${output.error.message}\n${retryNote}\n${createNote}\n${fallbackNote}`));
 }
-export async function runCodexCleanup(d: WriterDeps, task: TaskDefinition, cwd: string): Promise<Result<WriterOutput>> {
+export async function runCodexCleanup(d: WriterDeps, session: ClaudeSession | undefined, task: TaskDefinition, cwd: string): Promise<Result<WriterOutput>> {
   const prompt = await buildTaskFixPrompt(cwd, task, buildCleanupPrompt(task));
-  return retryNoop(d, task, cwd, prompt, await enforceWriterOutput(d, task, cwd, await d.codexWriter.fix(prompt, cwd), true), d.codexWriter.fix, true);
+  const output = await retryNoop(d, task, cwd, prompt, await enforceWriterOutput(d, task, cwd, await d.codexWriter.fix(prompt, cwd), true), d.codexWriter.fix, true);
+  if (output.ok || !session || output.error.code === 'CONFIG_ERROR') return output;
+  return enforceWriterOutput(d, task, cwd, await d.claude.cleanup(session), true);
 }

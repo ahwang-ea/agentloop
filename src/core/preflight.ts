@@ -62,7 +62,8 @@ export async function runStartPreflight(config: AgentloopConfig, deps: Preflight
   const dirty = status.value.split('\n').map(line => line.slice(3).trim()).filter(Boolean).filter(path => !ignorable(config, path));
   if (dirty.length > 0) return err('DIRTY_TREE', `Start preflight requires a clean repo: ${dirty.slice(0, 5).join(', ')}`);
   if (!config.useCodexWriter) return ok(undefined);
-  return deps.verifyCodexCli();
+  const codex = await deps.verifyCodexCli();
+  return !codex.ok && codex.error.code !== 'CONFIG_ERROR' ? codex : ok(undefined);
 }
 
 export async function runBenchmarkPreflight(config: AgentloopConfig, deps: PreflightDeps = shell): Promise<Result<void>> {
@@ -72,7 +73,8 @@ export async function runBenchmarkPreflight(config: AgentloopConfig, deps: Prefl
   const gitReady = await deps.run('git', ['--version']);
   if (!gitReady.ok) return err('CONFIG_ERROR', `Benchmark preflight requires git: ${gitReady.error.message}`);
   if (!config.useCodexWriter) return ok(undefined);
-  return deps.verifyCodexCli();
+  const codex = await deps.verifyCodexCli();
+  return !codex.ok && codex.error.code !== 'CONFIG_ERROR' ? codex : ok(undefined);
 }
 
 export async function runBenchmarkRepoSmokeTest(repoPath: string, run: Run = shell.run): Promise<Result<void>> {

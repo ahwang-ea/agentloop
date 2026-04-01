@@ -44,9 +44,14 @@ test('start preflight ignores generated files but blocks real dirty files', asyn
   expect(dirty).toEqual({ ok: false, error: expect.objectContaining({ code: 'DIRTY_TREE' }) });
 });
 
-test('start preflight rejects missing codex cli when codex writer is enabled', async () => {
+test('start preflight allows missing codex cli when claude fallback can proceed', async () => {
   const result = await runStartPreflight(config(), deps({ verifyCodexCli: async () => err('CONFIG_ERROR', 'Codex CLI is required') }));
-  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'CONFIG_ERROR' }) });
+  expect(result).toEqual({ ok: true, value: undefined });
+});
+
+test('start preflight still surfaces non-config codex verification failures', async () => {
+  const result = await runStartPreflight(config(), deps({ verifyCodexCli: async () => err('TRANSPORT_ERROR', 'codex check failed') }));
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'TRANSPORT_ERROR' }) });
 });
 
 test('benchmark preflight requires toolchain and api keys', async () => {

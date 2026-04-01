@@ -70,7 +70,7 @@ export async function handleClaim(d: Deps, claimed: ClaimedActionableTask, worke
     if (!d.config.codexEnabled) return escalate(d, state.task, 'Codex + Opus review requires OPENAI_API_KEY', claimToken);
     if (useCodexWriter) {
       const codex = await verifyCodexCli();
-      if (!codex.ok) return escalate(d, state.task, codex.error.message, claimToken);
+      if (!codex.ok && codex.error.code !== 'CONFIG_ERROR') return escalate(d, state.task, codex.error.message, claimToken);
     }
   }
   const feature = state.task.feature ? await d.git.createBranch(featureBranchName(state.task.feature), d.config.baseBranch) : null;

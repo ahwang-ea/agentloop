@@ -27,8 +27,8 @@ const { finishTaskRun } = await import('../task-runner-finish.js');
 
 const task = { id: 'task-1', title: 'Define result type', description: '', type: 'implement' as const, scope: { editableFiles: ['src/result.ts'], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium' as const, createdAt: '2026-03-31T00:00:00.000Z' };
 const conv = (): ConvergenceState => ({ rounds: [], classification: 'unknown', webSearchTriggered: false, reviewFindings: 0, errorTypes: [], changedFiles: ['src/result.ts'] });
-const ctx = (renewClaim = jest.fn(async () => ok(undefined))) => ({
-  d: { config: { reviewEnabled: false } as never, queue: { updateProgress: async () => ok(undefined), updateStatus: async () => ok(undefined), renewClaim }, git: {} as never, claude: {} as never, codex: {} as never, codexWriter: {} as never, notifier: {} as never } as never,
+const ctx = (renewClaim = jest.fn(async () => ok(undefined)), git: Record<string, unknown> = {}) => ({
+  d: { config: { reviewEnabled: false } as never, queue: { updateProgress: async () => ok(undefined), updateStatus: async () => ok(undefined), renewClaim }, git: git as never, claude: {} as never, codex: {} as never, codexWriter: {} as never, notifier: {} as never } as never,
   task, branch: 'al/task-1', mergeInto: 'main', worktreePath: '/tmp/agentloop-task-runner', token: 'claim-token', usage: { session: undefined, tokens: 0 },
 });
 const state = () => ({ conv: conv(), started: startedWrite(), t0: 1 });
@@ -51,6 +51,20 @@ test('runTaskSetup propagates renewal failures from the initial write lease', as
   expect(renewClaim).toHaveBeenCalledWith(task.id, 'claim-token');
   pending.release();
   await expect(promise).resolves.toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_ERROR', message: 'renew setup failed', details: expect.objectContaining({ ...details, leaseRenewal: true }) }) });
+});
+
+
+test('runTaskSetup does not retry after a delayed renewal failure', async () => {
+  const work = gate(), renew = gate(), details = { phase: 'start-renew' };
+  const revertFiles = jest.fn(async () => ok(undefined));
+  startWrite.mockImplementationOnce(async () => { await work.wait; return ok(startedWrite()); });
+  const renewClaim = jest.fn(async () => { await renew.wait; return err('SESSION_ERROR', 'renew setup failed', details); });
+  const promise = runTaskSetup(ctx(renewClaim, { revertFiles }) as any, undefined, undefined, false);
+  await jest.advanceTimersByTimeAsync(30_001);
+  work.release();
+  renew.release();
+  await expect(promise).resolves.toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_ERROR', message: 'renew setup failed', details: expect.objectContaining({ ...details, leaseRenewal: true }) }) });
+  expect(revertFiles).not.toHaveBeenCalled();
 });
 
 test('finishTaskRun propagates renewal failures from the cleanup lease', async () => {

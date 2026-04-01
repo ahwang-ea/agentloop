@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { err, ok } from '../../shared/result.js';
-import { startWrite } from '../writer.js';
+import { runWriterCleanup, startWrite } from '../writer.js';
 
 const task = {
   id: 'task-1',
@@ -69,4 +69,43 @@ test('falls back to claude when codex write returns a session error', async () =
   } as never, task, cwd);
   expect(result.ok).toBe(true);
   expect(prompt).toContain('Previous Codex attempt failed: codex write failed');
+});
+
+test('falls back to claude when codex cli is unavailable', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'agentloop-writer-config-error-'));
+  await mkdir(join(cwd, 'src', 'routes'), { recursive: true });
+  let prompt = '';
+  const result = await startWrite({
+    config: { repoPath: '.', useCodexWriter: true }, git,
+    codexWriter: { write: async () => err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true'), fix: async () => err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true') } as never,
+    claude: {
+      startSession: async (_task: unknown, _cwd: string, _warm: unknown, nextPrompt: string) => (prompt = nextPrompt, ok({ id: 'claude-2', taskId: task.id })),
+      waitForStop: async () => (await writeFile(join(cwd, 'src', 'routes', 'tasks.ts'), 'export const tasks = true;\n', 'utf-8'), ok({ text: 'done', changedFiles: ['src/routes/tasks.ts'], tokenEstimate: 1 })),
+    } as never,
+  } as never, task, cwd);
+  expect(result.ok).toBe(true);
+  expect(prompt).toContain('Previous Codex attempt failed: Codex CLI is required when useCodexWriter=true');
+});
+
+test('falls back to claude cleanup when codex cleanup fails', async () => {
+  let cleanupCalls = 0;
+  const result = await runWriterCleanup({
+    config: { repoPath: '.', useCodexWriter: true }, git,
+    codexWriter: { write: async () => ok({ text: 'noop', changedFiles: [], tokenEstimate: 1 }), fix: async () => err('SESSION_ERROR', 'codex cleanup failed') } as never,
+    claude: { cleanup: async () => (cleanupCalls += 1, ok({ text: 'clean', changedFiles: [], tokenEstimate: 2 })) } as never,
+  } as never, { id: 'claude-cleanup', taskId: task.id }, task, '.');
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(cleanupCalls).toBe(1);
+  expect(result.value.changedFiles).toEqual([]);
+  expect(result.value.tokenEstimate).toBe(2);
+});
+
+test('returns claude cleanup failure when fallback also fails', async () => {
+  const result = await runWriterCleanup({
+    config: { repoPath: '.', useCodexWriter: true }, git,
+    codexWriter: { write: async () => ok({ text: 'noop', changedFiles: [], tokenEstimate: 1 }), fix: async () => err('SESSION_ERROR', 'codex cleanup failed') } as never,
+    claude: { cleanup: async () => err('TRANSPORT_ERROR', 'claude cleanup failed') } as never,
+  } as never, { id: 'claude-cleanup', taskId: task.id }, task, '.');
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'TRANSPORT_ERROR', message: 'claude cleanup failed' }) });
 });

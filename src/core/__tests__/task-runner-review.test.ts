@@ -68,6 +68,23 @@ test('retries initial write once after a transient claude timeout', async () => 
   expect(reverts).toBe(1);
 });
 
+test('cleanup changes only pay the final merge verify once', async () => {
+  const cwd = await repo(), log = join(cwd, 'verify.log');
+  await writeFile(join(cwd, 'verify.sh'), '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> verify.log\nexit 0\n', 'utf-8');
+  await chmod(join(cwd, 'verify.sh'), 0o755);
+  const result = await runTask({
+    config: { repoPath: cwd, verifyCommand: './verify.sh', baseBranch: 'main', reviewEnabled: false, useCodexWriter: true } as never,
+    claude: {} as never, codex: {} as never,
+    codexWriter: { write: async () => ok({ text: 'wrote', changedFiles: ['src/result.ts'], tokenEstimate: 1 }), fix: async () => ok({ text: 'clean', changedFiles: ['src/result.ts'], tokenEstimate: 1 }) },
+    git: { commit: async () => ok('commit-1'), checkoutBase: async () => ok(cwd), merge: async () => ok('merge-1'), rebaseAll: async () => ok(undefined) } as never,
+    queue: { updateProgress: async () => ok(undefined), updateStatus: async () => ok(undefined), beginFinalization: async () => ok(undefined), renewClaim: async () => ok(undefined) } as never,
+    notifier: {} as never,
+  } as never, task, 'al/task-4', 'main', cwd, undefined, 'claim-token', undefined, { session: undefined, tokens: 0 }, false);
+  const runs = (await readFile(log, 'utf-8')).trim().split('\n');
+  expect(result.ok).toBe(true);
+  expect(runs).toEqual(['--progressive src/result.ts', '--progressive --merge src/result.ts']);
+});
+
 test('skips cleanup verify loop when cleanup changes no files', async () => {
   const cwd = await repo();
   const statuses: string[] = [];
