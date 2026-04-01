@@ -37,7 +37,6 @@ const mutateClaimedTask = (
 const completeTask = (task: TaskRecord, status: 'done' | 'stuck', extra: Partial<TaskRecord> = {}) => {
   Object.assign(task, { status, completedAt: new Date().toISOString(), claim: undefined }, extra);
 };
-
 export async function claimNextActionableTask(
   tasks: TaskRecord[],
   maxParallelAgents: number,
@@ -123,6 +122,7 @@ export const markTaskBlocked = (
 export function requeueBlockedTask(tasks: TaskRecord[], taskId: string): Result<void> {
   const task = tasks.find(record => record.task.id === taskId);
   if (!task) return err('QUEUE_EMPTY', `Task not found: ${taskId}`);
+  if (task.status !== 'blocked') return err('CONFIG_ERROR', `Task ${taskId} is not blocked`);
   Object.assign(task, { status: 'queued', blocked: undefined, round: 0, convergence: undefined, completedAt: undefined, claim: undefined });
   return ok(undefined);
 }

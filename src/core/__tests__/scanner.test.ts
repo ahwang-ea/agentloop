@@ -101,6 +101,24 @@ test('writes repo inventory with patterns, tests, and env mismatches', async () 
   expect(written.oversizedFiles).toEqual(['src/too-big.ts']);
 });
 
+test('round-trips raw-root inventories through writeInventory and readInventory', async () => {
+  const root = await repo();
+  await mkdir(join(root, 'src'), { recursive: true });
+  await Promise.all([writeFile(join(root, 'package.json'), JSON.stringify({ name: 'demo' }), 'utf-8'), writeFile(join(root, 'src', 'main.ts'), 'export const main = 1;', 'utf-8')]);
+  const written = await writeInventory(root), read = await readInventory(root);
+  expect(written.ok).toBe(true); expect(read.ok).toBe(true);
+  if (!written.ok || !read.ok || !read.value) return;
+  expect(read.value).toEqual(written.value);
+});
+
+test('falls back from malformed package.json and keeps current pyproject extraction', async () => {
+  const root = await repo();
+  await Promise.all([writeFile(join(root, 'package.json'), '{ nope', 'utf-8'), writeFile(join(root, 'pyproject.toml'), '[tool.poetry.dependencies]\npython = "^3.11"\nrequests = "^2.31"\n\n[project]\ndependencies = [\n  "requests>=2",\n  "pytest>=8",\n  "requests>=2",\n]\n', 'utf-8')]);
+  const inventory = await buildInventory(root, await discoverRepoFiles(root)), pyproject = inventory.dependencies.find(file => file.path === 'pyproject.toml');
+  expect(inventory.packages).toEqual([]); expect(inventory.dependencies).toHaveLength(1);
+  expect(pyproject?.dependencies).toEqual(['requests', 'dependencies', 'requests>=2', 'pytest>=8']);
+  expect(inventory.tests.frameworks).toEqual(['pytest']);
+});
 
 test('reads versioned inventory wrappers', async () => {
   const root = await repo();

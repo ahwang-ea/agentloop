@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import type { ConvergenceState, VerifyResult, WriterOutput } from '../../types/index.js';
-import { ok } from '../../shared/result.js';
+import { err, ok } from '../../shared/result.js';
 
 const writerOutput = (text: string, changedFiles: string[], tokenEstimate: number): WriterOutput => ({ text, changedFiles, tokenEstimate });
 const verifyResult = (pass: boolean, errors: VerifyResult['errors'] = []): VerifyResult => ({ pass, output: pass ? 'ok' : 'failed', errors, duration: 1 });
@@ -66,6 +66,8 @@ beforeEach(() => {
   commitAndMergeTask.mockResolvedValue(ok(undefined));
 });
 
+afterEach(() => jest.restoreAllMocks());
+
 test('runTaskSetup keeps the review-enabled path flowing through review', async () => {
   const statuses: string[] = [];
   const result = await runTaskSetup(ctx(statuses), undefined, undefined, false);
@@ -75,6 +77,23 @@ test('runTaskSetup keeps the review-enabled path flowing through review', async 
   expect(statuses).toEqual(['verifying', 'reviewing']);
 });
 
+test('runTaskSetup records scaffold failures before continuing', async () => {
+  const statuses: string[] = [], d = ctx(statuses) as any, progress = jest.fn(async () => ok(undefined));
+  scaffoldTask.mockResolvedValueOnce(err('SESSION_ERROR', 'bad scaffold')); d.d.queue.updateProgress = progress;
+  jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  const result = await runTaskSetup(d, undefined, undefined, true);
+  expect(result.ok).toBe(true);
+  expect(progress).toHaveBeenNthCalledWith(1, task.id, expect.objectContaining({ branch: 'al/task-1', round: 0, convergence: expect.objectContaining({ errorTypes: ['scaffold_bad_scaffold'] }) }), 'claim-token');
+  expect(statuses).toEqual(['verifying', 'reviewing']);
+});
+
+test('runTaskSetup propagates verifying status failures', async () => {
+  const d = ctx([]) as any; d.d.queue.updateStatus = async () => err('QUEUE_CORRUPT', 'status failed');
+  const result = await runTaskSetup(d, undefined, undefined, false);
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'QUEUE_CORRUPT', message: 'status failed' }) });
+  expect(verifyLoop).not.toHaveBeenCalled();
+});
+
 test('finishTaskRun skips the second iterative verify when cleanup is a no-op', async () => {
   const statuses: string[] = [];
   const result = await finishTaskRun(ctx(statuses), state());
@@ -82,6 +101,14 @@ test('finishTaskRun skips the second iterative verify when cleanup is a no-op', 
   expect(verifyLoop).not.toHaveBeenCalled();
   expect(progressiveVerify).toHaveBeenCalledWith(expect.anything(), ['src/result.ts'], '/tmp/agentloop-task-runner', true, 'implement');
   expect(statuses).toEqual(['cleanup', 'merging']);
+});
+
+test('finishTaskRun propagates cleanup progress failures', async () => {
+  const statuses: string[] = [], d = ctx(statuses) as any; d.d.queue.updateProgress = async () => err('QUEUE_CORRUPT', 'progress failed');
+  const result = await finishTaskRun(d, state());
+  expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: 'QUEUE_CORRUPT', message: 'progress failed' }) });
+  expect(progressiveVerify).not.toHaveBeenCalled();
+  expect(statuses).toEqual(['cleanup']);
 });
 
 test('finishTaskRun renews the lease during final merge verify', async () => {
