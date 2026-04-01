@@ -50,7 +50,9 @@ test('fails initial write when codex and claude both change no files', async () 
 
 test('retries initial write once after a transient claude timeout', async () => {
   const cwd = await repo();
-  let waits = 0, reverts = 0;
+  const retryTask = { ...task, scope: { ...task.scope, editableFiles: ['src/*.ts', 'tests/*.ts'] } };
+  let waits = 0;
+  const revertFiles = jest.fn(async () => ok(undefined));
   const result = await runTask({
     config: { repoPath: cwd, verifyCommand: './verify.sh', baseBranch: 'main', reviewEnabled: false, useCodexWriter: true } as never,
     claude: {
@@ -59,13 +61,14 @@ test('retries initial write once after a transient claude timeout', async () => 
     } as never,
     codex: {} as never,
     codexWriter: { write: async () => ok({ text: 'noop', changedFiles: [], tokenEstimate: 1 }), fix: async () => ok({ text: 'noop', changedFiles: [], tokenEstimate: 1 }) },
-    git: { revertFiles: async () => (reverts += 1, ok(undefined)), commit: async () => ok('commit-1'), checkoutBase: async () => ok(cwd), merge: async () => ok('merge-1'), rebaseAll: async () => ok(undefined) } as never,
+    git: { revertFiles, commit: async () => ok('commit-1'), checkoutBase: async () => ok(cwd), merge: async () => ok('merge-1'), rebaseAll: async () => ok(undefined) } as never,
     queue: { updateProgress: async () => ok(undefined), updateStatus: async () => ok(undefined), beginFinalization: async () => ok(undefined), renewClaim: async () => ok(undefined) } as never,
     notifier: {} as never,
-  } as never, task, 'al/task-3', 'main', cwd, undefined, 'claim-token', undefined, { session: undefined, tokens: 0 }, false);
+  } as never, retryTask, 'al/task-3', 'main', cwd, undefined, 'claim-token', undefined, { session: undefined, tokens: 0 }, false);
   expect(result.ok).toBe(true);
   expect(waits).toBe(2);
-  expect(reverts).toBe(1);
+  expect(revertFiles).toHaveBeenCalledTimes(1);
+  expect(revertFiles).toHaveBeenCalledWith(expect.arrayContaining(retryTask.scope.editableFiles), cwd);
 });
 
 test('cleanup changes only pay the final merge verify once', async () => {
