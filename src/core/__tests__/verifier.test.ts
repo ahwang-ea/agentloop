@@ -97,3 +97,13 @@ exit 1`);
     }),
   ]);
 });
+
+
+test('parses doc-freshness warnings when verify fails', async () => {
+  const result = await runVerify("printf 'WARNING: doc-freshness: 2 src/*.ts files changed without AGENTS.md or ARCHITECTURE.md updates\n'; exit 1");
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.errors).toEqual([
+    expect.objectContaining({ source: 'doc-freshness', message: '2 src/*.ts files changed without AGENTS.md or ARCHITECTURE.md updates' }),
+  ]);
+});

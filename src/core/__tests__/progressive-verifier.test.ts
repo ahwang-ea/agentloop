@@ -1,10 +1,24 @@
 import { access, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { jest } from '@jest/globals';
 import { progressiveVerify, runVerify } from '../verifier.js';
 
 jest.setTimeout(45_000);
+
+const exec = promisify(execFile);
+const git = (cwd: string, ...args: string[]) => exec('git', args, { cwd });
+const initGitRepo = async (repoPath: string) => {
+  await git(repoPath, 'init', '-b', 'main');
+  await git(repoPath, 'config', 'user.email', 'test@agentloop.local');
+  await git(repoPath, 'config', 'user.name', 'agentloop-test');
+};
+const commitAll = async (repoPath: string, message: string) => {
+  await git(repoPath, 'add', '.');
+  await git(repoPath, 'commit', '-m', message);
+};
 
 const repos: string[] = [];
 const repo = async () => {
@@ -46,6 +60,26 @@ test('runs staged verify in merge mode with parallel test workers', async () => 
   const result = await progressiveVerify(config(repoPath) as never, ['src.ts'], repoPath, true);
   expect(result.ok && result.value.pass).toBe(true);
   expect(await readFile(join(repoPath, 'log.txt'), 'utf-8')).toBe('typecheck\nrelated:parallel\nfull:parallel\nlint\n');
+});
+
+test('warns about doc freshness in merge mode when docs stay stale', async () => {
+  const repoPath = await repo();
+  await initGitRepo(repoPath);
+  await mkdir(join(repoPath, 'src'), { recursive: true });
+  await writeFile(join(repoPath, 'test-runner.js'), String.raw`const fs=require('fs');fs.appendFileSync('log.txt', process.argv.includes('--findRelatedTests') ? 'related\n' : 'full\n');`, 'utf-8');
+  await writeFile(join(repoPath, 'package.json'), JSON.stringify({ name: 'progressive', scripts: { typecheck: nodeScript('typecheck'), test: 'node test-runner.js', lint: nodeScript('lint') } }), 'utf-8');
+  await writeFile(join(repoPath, 'AGENTS.md'), '# AGENTS\n', 'utf-8');
+  await writeFile(join(repoPath, 'ARCHITECTURE.md'), '# ARCH\n', 'utf-8');
+  await writeVerify(repoPath);
+  await writeFile(join(repoPath, 'src', 'code.ts'), 'export const code = 0;\n', 'utf-8');
+  await commitAll(repoPath, 'init');
+  await git(repoPath, 'checkout', '-b', 'feature/doc-freshness');
+  await writeFile(join(repoPath, 'src', 'code.ts'), 'export const code = 1;\n', 'utf-8');
+  await commitAll(repoPath, 'feat: code');
+  const result = await runVerify('AGENTLOOP_SKIP_DEPCHECK=1 ./verify.sh --progressive --merge src/code.ts', repoPath);
+  expect(result.ok && result.value.pass).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.output).toContain('WARNING: doc-freshness: 1 src/*.ts files changed without AGENTS.md or ARCHITECTURE.md updates');
 });
 
 test('does not duplicate maxWorkers when test already sets it', async () => {

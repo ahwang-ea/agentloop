@@ -60,6 +60,11 @@ function parseVerifyOutput(output: string) {
     testName = undefined; expected = undefined; received = undefined; testLine = undefined; diff = [];
   };
   for (const line of lines) {
+    const freshness = line.match(/^WARNING: doc-freshness:\s+(.+)/);
+    if (freshness) {
+      errors.push({ source: 'doc-freshness', message: freshness[1], hash: hash(`doc-freshness:${freshness[1]}`) });
+      continue;
+    }
     const match = line.match(/^(.+?):(\d+):\d+:\s*(error|warning):\s*(.+)/);
     if (match) {
       pushTest();

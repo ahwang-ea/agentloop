@@ -14,6 +14,41 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+detect_doc_base() {
+  if [ -n "${AGENTLOOP_DOC_BASE:-}" ]; then
+    printf '%s\n' "$AGENTLOOP_DOC_BASE"
+    return 0
+  fi
+  for candidate in main master origin/main origin/master; do
+    if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  local remote_head
+  remote_head="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  [ -n "$remote_head" ] && printf '%s\n' "$remote_head"
+}
+
+warn_doc_freshness() {
+  [ "$merge_mode" = "1" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local base_ref merge_base changed code_changed count
+  base_ref="$(detect_doc_base || true)"
+  [ -n "$base_ref" ] || return 0
+  merge_base="$(git merge-base HEAD "$base_ref" 2>/dev/null || true)"
+  [ -n "$merge_base" ] || return 0
+  changed="$(git diff --name-only "$merge_base" HEAD -- 2>/dev/null || true)"
+  [ -n "$changed" ] || return 0
+  code_changed="$(printf '%s\n' "$changed" | grep -E '^src/.*\.ts$' || true)"
+  [ -n "$code_changed" ] || return 0
+  printf '%s\n' "$changed" | grep -qx 'AGENTS.md' && return 0
+  printf '%s\n' "$changed" | grep -qx 'ARCHITECTURE.md' && return 0
+  count="$(printf '%s\n' "$code_changed" | sed '/^$/d' | wc -l | tr -d ' ')"
+  echo "WARNING: doc-freshness: ${count} src/*.ts files changed without AGENTS.md or ARCHITECTURE.md updates"
+}
+
 run_checks() {
   if [ -d src ]; then
     PREFIX="${AGENTLOOP_PREFIX:-al-}"
@@ -32,6 +67,7 @@ run_checks() {
         echo "ERROR: commented-out code found"
         exit 1
       fi
+      warn_doc_freshness
     fi
   fi
 }
@@ -73,4 +109,4 @@ if [ -f pyproject.toml ]; then
 fi
 
 run_checks
-echo "verify.sh: no repo-specific verification configured yet. Edit this file for {{PROJECT_NAME}}."
+echo "verify.sh: no repo-specific verification configured yet. Edit this file for agentloop."
