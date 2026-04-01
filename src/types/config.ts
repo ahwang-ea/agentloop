@@ -26,6 +26,7 @@ export interface AgentloopConfig {
   linearApiKey?: string;
   linearTeamId?: string;
   maxParallelAgents: number;
+  shotgunAgents?: number;
   maxTasksPerSession: number;
   maxTokensPerSession: number;
   parallelVerify: boolean;

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ok } from '../../shared/result.js';
-import { resolveConflicts, runSequentialReviews } from '../reviewer.js';
+import { resolveConflicts, runParallelReviews } from '../reviewer.js';
 import type { ReviewFinding, ReviewRequest } from '../../types/index.js';
 
 const issue = (
@@ -87,7 +87,7 @@ test('runs reviews concurrently and returns stable ordering', async () => {
     await ready;
     return ok({ reviewer: request.role, findings: [], duration: 1, rawOutput: '{}' });
   };
-  const pending = runSequentialReviews({
+  const pending = runParallelReviews({
     config: { codexEnabled: true, agentsMdPath: agents, architectureMdPath: arch },
     codex: { review: codexReview },
     claude: { review: claudeReview } as never,
@@ -100,4 +100,24 @@ test('runs reviews concurrently and returns stable ordering', async () => {
   expect(startedBeforeRelease).toEqual(['codex-detail', 'opus-bigpicture']);
   if (!result.ok) return;
   expect(result.value.map(review => review.reviewer)).toEqual(['codex-detail', 'opus-bigpicture']);
+});
+
+test('dedupes overlapping findings and keeps the more specific reviewer', () => {
+  const findings: ReviewFinding[] = [
+    issue('opus-bigpicture', 'Rename the helper for clarity', 'rename', 'src/app.ts', 10),
+    issue('codex-detail', 'Rename helper `buildReview` for clarity', 'rename', 'src/app.ts', 11),
+  ];
+  const result = resolveConflicts(findings);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value).toEqual([findings[1]]);
+});
+
+test('keeps findings separate when only one side has a topicKey', () => {
+  const findings: ReviewFinding[] = [
+    { reviewer: 'deterministic-check', severity: 'suggestion', description: 'Tighten changed typing avoid broad casts and untyped parameters.', topicKey: 'type_safety', file: 'src/app.ts', line: 10 },
+    { reviewer: 'codex-detail', severity: 'suggestion', description: 'Avoid broad casts and untyped parameters to tighten changed typing in this helper.', file: 'src/app.ts', line: 10 },
+  ];
+  const result = resolveConflicts(findings);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value).toEqual(findings);
 });

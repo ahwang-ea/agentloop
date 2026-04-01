@@ -30,7 +30,7 @@ export function parseMetrics(raw: string, path: string): Result<MetricsRecord[]>
     let value: unknown;
     try { value = JSON.parse(line); } catch { return err('TRANSPORT_ERROR', `Malformed metrics log ${path}`); }
     const record = value as Partial<MetricsRecord> & {
-      time_sec?: number; review_findings?: number; task_type?: MetricsRecord['taskType']; token_total?: number; verify_time_sec?: number;
+      time_sec?: number; review_findings?: number; task_type?: MetricsRecord['taskType']; token_total?: number; verify_time_sec?: number; shotgun_winner?: number;
     };
     if (typeof record.task_id !== 'string' || typeof record.task !== 'string' || typeof record.timestamp !== 'string') return err('TRANSPORT_ERROR', `Malformed metrics log ${path}`);
     const next: MetricsRecord = {
@@ -42,6 +42,7 @@ export function parseMetrics(raw: string, path: string): Result<MetricsRecord[]>
       taskType: record.task_type ?? record.taskType,
       tokenTotal: typeof record.token_total === 'number' ? record.token_total : typeof record.tokenTotal === 'number' ? record.tokenTotal : undefined,
       verifyTimeSec: typeof record.verify_time_sec === 'number' ? record.verify_time_sec : typeof record.verifyTimeSec === 'number' ? record.verifyTimeSec : undefined,
+      shotgunWinner: typeof record.shotgun_winner === 'number' ? record.shotgun_winner : typeof record.shotgunWinner === 'number' ? record.shotgunWinner : undefined,
     };
     if (isNewer(next, latest.get(next.task_id))) latest.set(next.task_id, next);
   }

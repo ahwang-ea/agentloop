@@ -61,6 +61,7 @@ export interface ConvergenceState {
   reviewFindings: number;
   errorTypes: string[];
   changedFiles: string[];
+  shotgunWinner?: number;
 }
 export interface ConvergenceConfig { maxWallClock: number; maxTokens: number; stuckThreshold: number; thrashOverlapRatio: number; }
 
@@ -72,7 +73,7 @@ export type ScaffoldFile =
 export interface VerifyResult { pass: boolean; output: string; errors: VerifyError[]; duration: number; }
 export interface VerifyError { source: 'typecheck' | 'test' | 'lint' | 'build' | 'doc-freshness'; message: string; file?: string; line?: number; hash: string; }
 
-export type ReviewerRole = 'opus-bigpicture' | 'codex-detail';
+export type ReviewerRole = 'opus-bigpicture' | 'codex-detail' | 'deterministic-check';
 export interface ReviewRequest { diff: string; taskDefinition: TaskDefinition; architectureMd?: string; agentsMd: string; role: ReviewerRole; }
 export type FindingAction = 'keep' | 'change' | 'remove' | 'rename' | 'extract';
 
@@ -100,6 +101,7 @@ export interface TaskMetricsStats {
   taskType?: TaskType;
   tokenTotal?: number;
   verifyTimeSec?: number;
+  shotgunWinner?: number;
 }
 export interface MetricsRecord extends TaskMetricsStats {
   version?: 2;

@@ -34,8 +34,20 @@ const config = (repoPath: string): AgentloopConfig => ({
 });
 const task = (mode: Mode): TaskInput => ({
   title: `${mode} path`, description: 'Add greet implementation', type: mode === 'debug' ? 'debug' : 'implement',
-  scope: { editableFiles: ['src/greet.ts'], readOnlyContext: ['ARCHITECTURE.md'], forbiddenFiles: [] }, acceptanceCriteria: ['add greet function'], priority: 'medium',
+  scope: { editableFiles: ['src/greet.ts', 'src/greet.test.ts'], readOnlyContext: ['ARCHITECTURE.md'], forbiddenFiles: [] }, acceptanceCriteria: ['add greet function'], priority: 'medium',
 });
+const greetSource = 'export const greet = (name: string) => `hi ${name}`;\n';
+const greetTest = [
+  "import { greet } from './greet';",
+  "test('greet', () => {",
+  "  expect(greet('Ada')).toBe('hi Ada');",
+  '});',
+  '',
+].join('\n');
+const writeGreetFiles = async (cwd: string) => {
+  await writeFile(join(cwd, 'src', 'greet.ts'), greetSource, 'utf-8');
+  await writeFile(join(cwd, 'src', 'greet.test.ts'), greetTest, 'utf-8');
+};
 async function initRepo(repoPath: string, withCodexCli: boolean): Promise<Result<void>> {
   return wrap('init repo', async () => {
     await mkdir(repoPath, { recursive: true });
@@ -71,7 +83,11 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
       const cwd = [...paths.values()][0];
       if (!cwd) return ok('');
       const greet = await readText(join(cwd, 'src', 'greet.ts')); if (!greet.ok) return greet;
-      return ok(greet.value ? `diff --git a/src/greet.ts b/src/greet.ts\n--- /dev/null\n+++ b/src/greet.ts\n@@\n+${greet.value.trim()}\n` : '');
+      const test = await readText(join(cwd, 'src', 'greet.test.ts')); if (!test.ok) return test;
+      return ok([
+        greet.value ? `diff --git a/src/greet.ts b/src/greet.ts\n--- /dev/null\n+++ b/src/greet.ts\n@@\n+${greet.value.trim()}\n` : '',
+        test.value ? `diff --git a/src/greet.test.ts b/src/greet.test.ts\n--- /dev/null\n+++ b/src/greet.test.ts\n@@\n+${test.value.trim()}\n` : '',
+      ].filter(Boolean).join('\n'));
     };
     const deps: Deps = {
       config: cfg,
@@ -86,8 +102,8 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
         waitForStop: async () => !noCodex ? ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }) : wrap('claude write', async () => {
           const cwd = [...paths.values()][0], logged = await mark(repoPath, 'claude-write');
           if (!cwd) throw new Error('missing worktree'); if (!logged.ok) throw new Error(logged.error.message);
-          await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8');
-          return { text: 'wrote greet', changedFiles: ['src/greet.ts'], tokenEstimate: 1 };
+          await writeGreetFiles(cwd);
+          return { text: 'wrote greet', changedFiles: ['src/greet.ts', 'src/greet.test.ts'], tokenEstimate: 1 };
         }),
         fix: async () => ok({ text: 'unused', changedFiles: [], tokenEstimate: 1 }),
         cleanup: async () => { const logged = noCodex ? await mark(repoPath, 'cleanup') : ok(undefined); return logged.ok ? ok({ text: noCodex ? 'cleanup' : 'unused', changedFiles: [], tokenEstimate: 1 }) : logged; },
@@ -101,15 +117,15 @@ export async function runScenario(mode: Mode): Promise<Result<Scenario>> {
         write: async (_prompt, cwd) => {
           if (noCodex) return err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true');
           const logged = await mark(repoPath, 'write'); if (!logged.ok) return logged;
-          return wrap('write greet', async () => { await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8'); return { text: 'wrote greet', changedFiles: ['src/greet.ts'], tokenEstimate: 1 }; });
+          return wrap('write greet', async () => { await writeGreetFiles(cwd); return { text: 'wrote greet', changedFiles: ['src/greet.ts', 'src/greet.test.ts'], tokenEstimate: 1 }; });
         },
         fix: async (prompt, cwd) => {
           if (noCodex) return err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true');
           const cleanupPrompt = buildCleanupPrompt({ scope: task(mode).scope } as never);
           const cleanup = prompt.includes(cleanupPrompt), logged = await mark(repoPath, cleanup ? 'cleanup' : 'fix'); if (!logged.ok) return logged;
           return wrap('fix greet', async () => {
-            if (cleanup) await writeFile(join(cwd, 'src', 'greet.ts'), 'export const greet = (name: string) => `hi ${name}`;\n', 'utf-8');
-            return { text: cleanup ? 'cleanup' : 'retry', changedFiles: ['src/greet.ts'], tokenEstimate: 1 };
+            if (cleanup) await writeGreetFiles(cwd);
+            return { text: cleanup ? 'cleanup' : 'retry', changedFiles: ['src/greet.ts', 'src/greet.test.ts'], tokenEstimate: 1 };
           });
         },
       },
