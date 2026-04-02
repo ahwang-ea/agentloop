@@ -15,7 +15,7 @@ export async function createDeps(config: AgentloopConfig, _interactive: boolean)
     config: { ...config, codexEnabled: config.codexEnabled && Boolean(process.env.OPENAI_API_KEY) },
     claude: createClaudeAdapter(config),
     codex: createCodexAdapter(process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL ?? config.codexModel),
-    codexWriter: createCodexWriterAdapter(config.codexModel),
+    codexWriter: createCodexWriterAdapter(config.codexModel, config.codexReasoningEffort),
     git: createGitAdapter(config),
     notifier: createNotifierAdapter(config),
     queue: createFileTaskQueue(config),

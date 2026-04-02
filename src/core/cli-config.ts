@@ -12,7 +12,7 @@ export const DEFAULT_CONFIG: AgentloopConfig = {
   agentsMdPath: 'AGENTS.md',
   architectureMdPath: 'ARCHITECTURE.md',
   claudeModel: 'claude-opus-4-6',
-  codexModel: 'gpt-4.1',
+  codexModel: 'gpt-5.4',
   codexEnabled: true,
   useCodexWriter: true,
   autoApproveResearch: false,

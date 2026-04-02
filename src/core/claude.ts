@@ -15,7 +15,7 @@ import { buildScaffoldPrompt, parseScaffoldOutput } from './scaffold.js';
 import { cleanupPrompt, buildWritePrompt } from './writer-prompt.js';
 
 const WRITE_TIMEOUT_MS = 180_000;
-const SCAFFOLD_TIMEOUT_MS = 60_000;
+const SCAFFOLD_TIMEOUT_MS = 30_000;
 const REVIEW_TIMEOUT_MS = 60_000;
 const CHAT_TIMEOUT_MS = 180_000;
 

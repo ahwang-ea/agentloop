@@ -14,6 +14,12 @@ const rules = [
   'Assume package.json is read-only unless a task must change dependencies; prefer plans that reuse the dependencies already present in the repo.',
   'Do not invent extra library-specific requirements or impossible invariants unless they appear in the goal, architecture, or existing repo files.',
   'Include tests in acceptance criteria. Use dependsOn only for EARLIER planIds.',
+  'SPEED: Generate 4-5 self-contained tasks. Each entity task must include its service, route handler, AND tests so it compiles independently.',
+  'SPEED: Dependency depth MUST be exactly 2. One foundation task (types+schemas+db, no deps). ALL remaining tasks depend ONLY on foundation and run fully in parallel.',
+  'SPEED: Do NOT create a final wiring/integration task that depends on entity tasks. The app wiring task depends only on foundation. Entity route files are mounted by the app task via dynamic imports or the app task creates stubs.',
+  'SPEED: Each entity task writes ALL files it needs to compile: service + route + test. It must pass typecheck independently.',
+  'SPEED: NO TWO TASKS may write to the same file. Each task must own exclusive files. Do not create shared barrel files (index.ts, routes/index.ts) in entity tasks — only the foundation or app wiring task may create shared barrels.',
+  'SPEED: Keep entity tasks SMALL — prefer 2-3 files per task (one service, one route, one test). Fewer files = faster completion.',
 ];
 
 const issueBlock = (issues: string[]) => issues.length === 0 ? [] : ['', 'Fix these validation issues from your last attempt:', ...issues.map(issue => `- ${issue}`)];
