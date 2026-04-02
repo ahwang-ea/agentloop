@@ -20,7 +20,7 @@ await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecor
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
 const acceptance = (golden = false) => golden
-  ? [{ type: 'command' as const, name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPattern', 'golden'] }]
+  ? [{ type: 'command' as const, name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPatterns', 'golden'] }]
   : [{ type: 'command' as const, name: 'smoke', cmd: 'npm', args: ['test'] }];
 const entry = (goldenTestFile?: string): BenchmarkCatalogEntry => ({
   id: 'crm', fileStem: 'crm', suite: { name: 'CRM', goal: 'build a crm', maxTimeSec: 60, acceptanceTests: acceptance(Boolean(goldenTestFile)), ...(goldenTestFile ? { goldenTestFile } : {}) },

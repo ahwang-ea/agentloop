@@ -47,6 +47,10 @@ export function createGitMergeOps(
       const prefix = normalizeBranchPrefix(config.branchPrefix), other = worktrees.branchName(except);
       const list = await worktrees.listWorktrees(); if (!list.ok) return list;
       for (const item of list.value.filter(worktree => worktree.branch && worktree.branch !== other && worktree.branch.startsWith(prefix))) {
+        const reverted = await runner.run(item.path, `cleanupTracked(${item.branch})`, ['checkout', '--', '.']);
+        if (!reverted.ok) console.error(reverted.error.message);
+        const cleaned = await runner.run(item.path, `cleanupUntracked(${item.branch})`, ['clean', '-fd']);
+        if (!cleaned.ok) console.error(cleaned.error.message);
         const rebased = await runner.run(item.path, `rebase(${item.branch})`, ['rebase', base]);
         if (!rebased.ok) { await runner.run(item.path, `abortRebase(${item.branch})`, ['rebase', '--abort']); return rebased; }
       }

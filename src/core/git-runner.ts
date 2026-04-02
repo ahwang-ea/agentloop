@@ -14,7 +14,7 @@ const mapGitError = (error: unknown, action: string): Result<never> => {
   const message = gitErrorText(error);
   const code = /CONFLICT|conflict/.test(message) ? 'MERGE_CONFLICT'
     : /pathspec|did not match any file/.test(message) ? 'BRANCH_NOT_FOUND'
-    : /local changes|Please commit your changes/.test(message) ? 'DIRTY_TREE'
+    : /local changes|Please commit your changes|unstaged changes/.test(message) ? 'DIRTY_TREE'
     : 'GIT_ERROR';
   return err(code, `${action}: ${message}`);
 };

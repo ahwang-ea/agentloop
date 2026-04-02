@@ -29,6 +29,7 @@ const summarize = (metrics: MetricsRecord[]) => ({
 });
 const transientPlanError = (message: string) => /api error|overloaded|internal server error|timed out/i.test(message);
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, process.env.NODE_ENV === 'test' ? 1 : ms));
+const attemptStaggerMs = 1_000;
 const runMetadata = (config: AgentloopConfig) => ({
   mode: 'benchmark-fast-path' as const,
   depcheckSkipped: config.verifyCommand.includes('AGENTLOOP_SKIP_DEPCHECK=1'),
@@ -52,14 +53,16 @@ const planWithRetry = async (entry: BenchmarkCatalogEntry, attempt: number, deps
   return planned;
 };
 
-async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopConfig, attempt: number): Promise<Result<BenchmarkResult>> {
+interface AttemptResult { result: Result<BenchmarkResult>; repoPath: string; }
+
+async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopConfig, attempt: number): Promise<AttemptResult> {
   const started = Date.now();
   const effort = EFFORT_LEVELS[attempt % EFFORT_LEVELS.length];
   const useCodex = WRITER_MODES[attempt % WRITER_MODES.length];
   let repoPath = '';
   try {
     const boot = await bootstrapBenchmarkRepo(entry);
-    if (!boot.ok) { logAttempt(entry, attempt, `bootstrap failed: ${boot.error.message}`); return ok(failed(entry, started, boot.error.message)); }
+    if (!boot.ok) { logAttempt(entry, attempt, `bootstrap failed: ${boot.error.message}`); return { result: ok(failed(entry, started, boot.error.message)), repoPath: '' }; }
     repoPath = boot.value;
     logAttempt(entry, attempt, `repo: ${repoPath} effort: ${effort} writer: ${useCodex ? 'codex' : 'claude'}`);
     const config: AgentloopConfig = {
@@ -81,13 +84,13 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     };
     const metadata = runMetadata(config);
     const deps = await createDeps(config, false);
-    if (!deps.ok) { logAttempt(entry, attempt, `deps failed: ${deps.error.message}`); return ok(failed(entry, started, deps.error.message, metadata)); }
+    if (!deps.ok) { logAttempt(entry, attempt, `deps failed: ${deps.error.message}`); return { result: ok(failed(entry, started, deps.error.message, metadata)), repoPath }; }
     const planned = await planWithRetry(entry, attempt, deps.value);
-    if (!planned.ok) { logAttempt(entry, attempt, `planning failed: ${planned.error.message}`); return ok(failed(entry, started, planned.error.message, metadata)); }
+    if (!planned.ok) { logAttempt(entry, attempt, `planning failed: ${planned.error.message}`); return { result: ok(failed(entry, started, planned.error.message, metadata)), repoPath }; }
     const flat = flattenPlan(planned.value);
     logAttempt(entry, attempt, `flattened ${planned.value.length} tasks to depth-2`);
     const enqueued = await enqueuePlan(deps.value.queue, flat);
-    if (!enqueued.ok) { logAttempt(entry, attempt, `enqueue failed: ${enqueued.error.message}`); return ok(failed(entry, started, enqueued.error.message, metadata)); }
+    if (!enqueued.ok) { logAttempt(entry, attempt, `enqueue failed: ${enqueued.error.message}`); return { result: ok(failed(entry, started, enqueued.error.message, metadata)), repoPath }; }
     logAttempt(entry, attempt, `enqueued ${enqueued.value.length} tasks`);
     const orchestrated = await runOrchestrator(deps.value, Date.now() + (entry.suite.maxTimeSec * 1000));
     if (entry.suite.goldenTestFile) {
@@ -123,39 +126,62 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     const stats = summarize(metricList), passed = checks.filter(test => test.passed).length;
     const s = score(completed, total, passed, checks.length);
     logAttempt(entry, attempt, `score: ${s} (${completed}/${total} tasks, ${passed}/${checks.length} checks)`);
-    return ok({ version: 2, suite: entry.fileStem, timestamp: new Date().toISOString(), duration: Math.round((Date.now() - started) / 1000), tasksTotal: total, tasksCompleted: completed, tasksStuck: stuck, avgRounds: stats.avgRounds, avgTimeSec: stats.avgTimeSec, firstPassRate: stats.firstPassRate, firstPass: stats.firstPass, acceptanceTests: checks, score: s, metricsSnapshot: metricList, runMetadata: metadata });
-  } finally {
-    if (repoPath) {
-      if (process.env.AGENTLOOP_KEEP_BENCHMARK_REPO === '1') logAttempt(entry, attempt, `keeping repo: ${repoPath}`);
-      else await rm(repoPath, { recursive: true, force: true });
-    }
+    return { result: ok({ version: 2, suite: entry.fileStem, timestamp: new Date().toISOString(), duration: Math.round((Date.now() - started) / 1000), tasksTotal: total, tasksCompleted: completed, tasksStuck: stuck, avgRounds: stats.avgRounds, avgTimeSec: stats.avgTimeSec, firstPassRate: stats.firstPassRate, firstPass: stats.firstPass, acceptanceTests: checks, score: s, metricsSnapshot: metricList, runMetadata: metadata }), repoPath };
+  } catch {
+    return { result: ok(failed(entry, started, 'unexpected error')), repoPath };
   }
 }
 
+const keepRepo = () => process.env.AGENTLOOP_KEEP_BENCHMARK_REPO === '1';
+const cleanupRepos = async (repoPaths: string[], winnerPath: string, entry: BenchmarkCatalogEntry) => {
+  for (const path of repoPaths) {
+    if (!path || path === winnerPath) continue;
+    await rm(path, { recursive: true, force: true }).catch(() => {});
+  }
+  if (winnerPath) {
+    if (keepRepo()) writeStderr(`[benchmark:${entry.fileStem}] keeping winner repo: ${winnerPath}`);
+    else await rm(winnerPath, { recursive: true, force: true }).catch(() => {});
+  }
+};
+
 export async function runBenchmarkSuite(entry: BenchmarkCatalogEntry, base: AgentloopConfig): Promise<Result<BenchmarkResult>> {
   const attempts = Math.max(1, Number(process.env.AGENTLOOP_BENCHMARK_ATTEMPTS ?? '4'));
-  if (attempts === 1) return runSingleAttempt(entry, base, 0);
+  if (attempts === 1) {
+    const { result, repoPath } = await runSingleAttempt(entry, base, 0);
+    if (repoPath) {
+      if (keepRepo()) writeStderr(`[benchmark:${entry.fileStem}] keeping repo: ${repoPath}`);
+      else await rm(repoPath, { recursive: true, force: true }).catch(() => {});
+    }
+    return result;
+  }
 
   writeStderr(`[benchmark:${entry.fileStem}] racing ${attempts} parallel attempts`);
   const runners = Array.from({ length: attempts }, (_, i) =>
-    pause(i * 3_000).then(() => runSingleAttempt(entry, base, i)),
+    pause(i * attemptStaggerMs).then(() => runSingleAttempt(entry, base, i)),
   );
+  const allRepoPaths: string[] = [];
 
   return new Promise(resolve => {
     let settled = false, completedCount = 0;
-    let best: Result<BenchmarkResult> | undefined;
+    let best: AttemptResult | undefined;
     for (const runner of runners) {
-      runner.then(result => {
+      runner.then(attempt => {
         completedCount++;
+        allRepoPaths.push(attempt.repoPath);
         if (settled) return;
-        if (!best || (result.ok && (!best.ok || result.value.score > best.value.score))) best = result;
-        if (result.ok && result.value.score > 0) {
+        if (!best || (attempt.result.ok && (!best.result.ok || attempt.result.value.score > best.result.value.score))) best = attempt;
+        if (attempt.result.ok && attempt.result.value.score > 0) {
           settled = true;
-          writeStderr(`[benchmark:${entry.fileStem}] winner found (${completedCount}/${attempts}), score=${result.value.score}`);
-          resolve(result);
+          writeStderr(`[benchmark:${entry.fileStem}] winner found (${completedCount}/${attempts}), score=${attempt.result.value.score}`);
+          resolve(attempt.result);
+          Promise.all(runners).then(() => cleanupRepos(allRepoPaths, attempt.repoPath, entry));
           return;
         }
-        if (completedCount === attempts) { settled = true; resolve(best!); }
+        if (completedCount === attempts) {
+          settled = true;
+          resolve(best!.result);
+          cleanupRepos(allRepoPaths, best!.repoPath, entry);
+        }
       });
     }
   });

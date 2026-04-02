@@ -18,6 +18,6 @@ export const polymarketSuite: BenchmarkSuite = {
     { type: 'command', name: 'tests pass', cmd: 'npm', args: ['test'] },
     { type: 'file-contains-regex', name: 'has adapter interfaces', dir: 'src', extensions: ['.ts'], regex: 'interface\\s+\\w+Adapter' },
     { type: 'min-file-count', name: 'has 3+ test files', dir: 'src', extension: '.test.ts', min: 3 },
-    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPattern', 'golden'] },
+    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPatterns', 'golden'] },
   ],
 };

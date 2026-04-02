@@ -30,6 +30,7 @@ await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecor
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
 beforeEach(() => {
+  process.env.AGENTLOOP_BENCHMARK_ATTEMPTS = '1';
   jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   bootstrapBenchmarkRepo.mockReset();
   createDeps.mockReset();
@@ -53,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.AGENTLOOP_BENCHMARK_ATTEMPTS;
   jest.restoreAllMocks();
 });
 
@@ -133,7 +135,6 @@ test('falls back to enqueued task counts when queue listing is empty', async () 
 
 
 test('retries transient planner failures before giving up', async () => {
-  process.env.AGENTLOOP_BENCHMARK_ATTEMPTS = '1';
   generatePlan
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: Repeated 529 Overloaded errors'))
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: 500 internal server error'))
@@ -146,5 +147,4 @@ test('retries transient planner failures before giving up', async () => {
   const result = await runBenchmarkSuite(entry, config);
   expect(result.ok).toBe(true);
   expect(generatePlan).toHaveBeenCalledTimes(3);
-  delete process.env.AGENTLOOP_BENCHMARK_ATTEMPTS;
 });

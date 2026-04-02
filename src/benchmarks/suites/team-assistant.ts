@@ -22,6 +22,6 @@ export const teamAssistantSuite: BenchmarkSuite = {
     { type: 'file-contains-regex', name: 'has summarizer', dir: 'src', extensions: ['.ts'], regex: 'openai|OpenAI|summarize' },
     { type: 'command', name: 'builds to dist', cmd: 'npm', args: ['run', 'build'] },
     { type: 'file-exists', name: 'has CLI entrypoint', paths: ['dist/index.js', 'dist/cli.js', 'dist/main.js'] },
-    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPattern', 'golden'] },
+    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPatterns', 'golden'] },
   ],
 };
