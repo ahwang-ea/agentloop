@@ -31,6 +31,8 @@ export interface AgentloopConfig {
   maxTokensPerSession: number;
   parallelVerify: boolean;
   sweepInterval: number;
+  skipCleanup?: boolean;
+  codexReasoningEffort?: string;
 }
 
 export interface HookConfig {

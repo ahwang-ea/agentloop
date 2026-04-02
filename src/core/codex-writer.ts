@@ -37,12 +37,13 @@ export async function verifyCodexCli(): Promise<Result<void>> {
   catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? err('CONFIG_ERROR', 'Codex CLI is required when useCodexWriter=true') : ok(undefined); }
 }
 
-export function createCodexWriterAdapter(model: string): CodexWriterAdapter {
+export function createCodexWriterAdapter(model: string, reasoningEffort?: string): CodexWriterAdapter {
+  const effortArgs = reasoningEffort ? ['-c', `model_reasoning_effort="${reasoningEffort}"`] : [];
   const run = async (prompt: string, cwd: string): Promise<Result<WriterOutput>> => {
     const dir = await mkdtemp(join(tmpdir(), 'agentloop-codex-'));
     const out = join(dir, 'last-message.txt');
     try {
-      await exec('codex', ['exec', '--full-auto', '--color', 'never', '-m', model, '-C', cwd, '-o', out, prompt], { cwd, timeout: codexTimeoutMs(), maxBuffer: 10 * 1024 * 1024 });
+      await exec('codex', ['exec', '--full-auto', '--color', 'never', '-m', model, ...effortArgs, '-C', cwd, '-o', out, prompt], { cwd, timeout: codexTimeoutMs(), maxBuffer: 10 * 1024 * 1024 });
       const files = await changedFiles(cwd); if (!files.ok) return files;
       return ok({ text: (await readOutput(out)).trim(), changedFiles: files.value, tokenEstimate: 0 });
     } catch (e) {

@@ -22,7 +22,8 @@ const readMetricsRecords = jest.fn(async () => ok([
 
 await jest.unstable_mockModule('../benchmark-bootstrap.js', () => ({ bootstrapBenchmarkRepo }));
 await jest.unstable_mockModule('../deps.js', () => ({ createDeps }));
-await jest.unstable_mockModule('../planner.js', () => ({ generatePlan, enqueuePlan }));
+const flattenPlan = jest.fn((plan: unknown[]) => plan);
+await jest.unstable_mockModule('../planner.js', () => ({ generatePlan, enqueuePlan, flattenPlan, formatPlan: jest.fn() }));
 await jest.unstable_mockModule('../../orchestrator.js', () => ({ runOrchestrator }));
 await jest.unstable_mockModule('../benchmark-acceptance.js', () => ({ runAcceptanceTests }));
 await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecords }));
@@ -132,6 +133,7 @@ test('falls back to enqueued task counts when queue listing is empty', async () 
 
 
 test('retries transient planner failures before giving up', async () => {
+  process.env.AGENTLOOP_BENCHMARK_ATTEMPTS = '1';
   generatePlan
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: Repeated 529 Overloaded errors'))
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: 500 internal server error'))
@@ -144,4 +146,5 @@ test('retries transient planner failures before giving up', async () => {
   const result = await runBenchmarkSuite(entry, config);
   expect(result.ok).toBe(true);
   expect(generatePlan).toHaveBeenCalledTimes(3);
+  delete process.env.AGENTLOOP_BENCHMARK_ATTEMPTS;
 });

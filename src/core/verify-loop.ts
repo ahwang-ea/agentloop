@@ -56,6 +56,7 @@ const verifyFixPrompt = (task: TaskDefinition, verify: VerifyResult) => verify.e
   ...(rowTypingErrors(verify) ? [
     '',
     'Reuse existing row types or mapper helpers from src/db/*.ts before accessing row fields. Do not treat rows as `{}` or `unknown`, and avoid hand-written placeholder objects.',
+    'For better-sqlite3: cast .get() results with `as RowType | undefined` and .all() results with `as RowType[]`. Define a typed row interface with snake_case fields if one does not already exist in src/db/.',
   ] : []),
   ...(resultValueErrors(verify) ? [
     '',

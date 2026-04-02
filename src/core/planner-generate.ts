@@ -66,6 +66,16 @@ export async function generatePlan(d: PlannerDeps, goal: string): Promise<Result
   return retriedIssues.length === 0 ? retried : err('CONFIG_ERROR', `Plan validation failed:\n- ${retriedIssues.join('\n- ')}`);
 }
 
+/** Flatten dependency graph to depth-2: first task has no deps, all others depend only on it. */
+export function flattenPlan(plan: PlannedTask[]): PlannedTask[] {
+  if (plan.length <= 1) return plan;
+  const root = plan[0];
+  return [
+    { ...root, dependsOn: [] },
+    ...plan.slice(1).map(task => ({ ...task, dependsOn: [root.planId] })),
+  ];
+}
+
 export async function enqueuePlan(queue: TaskQueueAdapter, plan: PlannedTask[]): Promise<Result<TaskDefinition[]>> {
   const issues = validatePlan(plan); if (issues.length > 0) return err('CONFIG_ERROR', `Invalid plan:\n- ${issues.join('\n- ')}`);
   const ids = new Map<string, string>(), tasks: TaskDefinition[] = [];

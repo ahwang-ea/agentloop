@@ -42,6 +42,7 @@ export const buildWritePrompt = (task: TaskDefinition, examples: string[] = []) 
   'Respect optional vs required fields from read-only context; do not invent new invariants or validation rules unless the task or acceptance criteria require them.',
   'Do not generate ids or timestamps inside business logic unless the task explicitly asks for it; prefer ids from input and injected clocks.',
   'Do not invent repository, store, or *Db abstractions unless the task explicitly asks for them; prefer existing db helpers, row mappers, and Result types from read-only context.',
+  'When using better-sqlite3, always type database rows: cast .get() as RowType | undefined and .all() as RowType[]. Never leave row results as unknown or {}.',
   'Do not import or add new npm packages unless the task explicitly requires them and package.json is editable; prefer built-in Node APIs or local helpers.',
   'If an editable path is a glob or a missing file, create matching in-scope directories and files yourself before stopping.',
   'Do not create empty source files; every created code file must contain real exports, logic, or tests.',

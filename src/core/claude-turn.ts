@@ -61,6 +61,7 @@ export async function runClaudeTurn(
         model: config.claudeModel,
         permissionMode: agentic(mode) ? 'acceptEdits' : 'dontAsk',
         settingSources: agentic(mode) ? PROJECT_SETTINGS : undefined,
+        ...(agentic(mode) ? { thinking: { type: 'adaptive' } as const, effort: 'max' as const } : {}),
         tools: tools(mode),
         resume,
       };
