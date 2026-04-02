@@ -19,8 +19,11 @@ const text = (value: string) => value.trim() || undefined;
 
 async function run(root: string, test: AcceptanceTest): Promise<BenchmarkResult['acceptanceTests'][number]> {
   if (test.type === 'command') {
+    const args = test.cmd === 'npm' && test.args.length === 1 && test.args[0] === 'test' && await exists(join(root, 'src', '__tests__', 'golden.test.ts'))
+      ? [...test.args, '--', '--testPathIgnorePatterns', 'golden\\.test\\.ts$']
+      : test.args;
     try {
-      const { stdout, stderr } = await exec(command(test.cmd), test.args, { cwd: root, timeout: test.timeoutMs ?? 180_000, maxBuffer: 10_000_000 });
+      const { stdout, stderr } = await exec(command(test.cmd), args, { cwd: root, timeout: test.timeoutMs ?? 180_000, maxBuffer: 10_000_000 });
       return { name: test.name, passed: (test.expectExitCode ?? 0) === 0, output: text(`${stdout}${stderr}`) };
     } catch (e) {
       const err = e as { code?: number; stdout?: string; stderr?: string; message?: string };

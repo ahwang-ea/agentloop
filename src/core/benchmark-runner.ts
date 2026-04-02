@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { BenchmarkCatalogEntry, BenchmarkResult, BenchmarkRunMetadata } from '../benchmarks/types.js';
 import { ok, type Result } from '../shared/result.js';
 import { writeStderr } from '../shared/stderr.js';
@@ -89,6 +90,16 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     if (!enqueued.ok) { logAttempt(entry, attempt, `enqueue failed: ${enqueued.error.message}`); return ok(failed(entry, started, enqueued.error.message, metadata)); }
     logAttempt(entry, attempt, `enqueued ${enqueued.value.length} tasks`);
     const orchestrated = await runOrchestrator(deps.value, Date.now() + (entry.suite.maxTimeSec * 1000));
+    if (entry.suite.goldenTestFile) {
+      const goldenDir = join(repoPath, 'src', '__tests__');
+      try {
+        await mkdir(goldenDir, { recursive: true });
+        await writeFile(join(goldenDir, 'golden.test.ts'), entry.suite.goldenTestFile, 'utf-8');
+        logAttempt(entry, attempt, 'injected golden test');
+      } catch (e) {
+        logAttempt(entry, attempt, `golden injection failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+      }
+    }
     const acceptance = await runAcceptanceTests(repoPath, entry.suite.acceptanceTests);
     const metrics = await readMetricsRecords({ repoPath });
     const tasks = await deps.value.queue.list();

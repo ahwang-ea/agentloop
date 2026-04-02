@@ -1,4 +1,5 @@
 import type { BenchmarkSuite } from '../types.js';
+import { chatbotGoldenTest } from '../golden-tests/chatbot.js';
 
 export const chatbotSuite: BenchmarkSuite = {
   name: 'ChatGPT-style chat app',
@@ -10,12 +11,15 @@ export const chatbotSuite: BenchmarkSuite = {
     'the last 20 messages, a system prompt configurable via env var, and mocked backend tests.',
   ].join(' '),
   maxTimeSec: 2400,
-  baseDeps: ['express', '@types/express', 'openai'],
+  baseDeps: ['express', '@types/express', 'openai', 'supertest', '@types/supertest'],
+  architectureNotes: '- Export the configured Express app as the default export from src/app.ts (do not call app.listen in that file).',
+  goldenTestFile: chatbotGoldenTest,
   acceptanceTests: [
     { type: 'command', name: 'compiles', cmd: 'npm', args: ['run', 'typecheck'] },
     { type: 'command', name: 'tests pass', cmd: 'npm', args: ['test'] },
     { type: 'file-contains-regex', name: 'has chat endpoint', dir: 'src', extensions: ['.ts'], regex: "['\"/]chat" },
     { type: 'file-exists', name: 'has frontend', paths: ['src/public/index.html', 'public/index.html'] },
     { type: 'file-contains-regex', name: 'has SSE streaming', dir: 'src', extensions: ['.ts'], regex: 'text/event-stream|EventSource' },
+    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPattern', 'golden'] },
   ],
 };

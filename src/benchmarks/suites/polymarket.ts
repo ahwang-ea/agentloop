@@ -1,4 +1,5 @@
 import type { BenchmarkSuite } from '../types.js';
+import { polymarketGoldenTest } from '../golden-tests/polymarket.js';
 
 export const polymarketSuite: BenchmarkSuite = {
   name: 'Polymarket/Kalshi arbitrage finder',
@@ -11,10 +12,12 @@ export const polymarketSuite: BenchmarkSuite = {
   ].join(' '),
   maxTimeSec: 2400,
   baseDeps: ['axios@1.14.0', 'cli-table3'],
+  goldenTestFile: polymarketGoldenTest,
   acceptanceTests: [
     { type: 'command', name: 'compiles', cmd: 'npm', args: ['run', 'typecheck'] },
     { type: 'command', name: 'tests pass', cmd: 'npm', args: ['test'] },
     { type: 'file-contains-regex', name: 'has adapter interfaces', dir: 'src', extensions: ['.ts'], regex: 'interface\\s+\\w+Adapter' },
     { type: 'min-file-count', name: 'has 3+ test files', dir: 'src', extension: '.test.ts', min: 3 },
+    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPattern', 'golden'] },
   ],
 };
