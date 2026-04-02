@@ -7,6 +7,8 @@ import type { AgentloopConfig, MetricsRecord } from '../types/index.js';
 import { runOrchestrator } from '../orchestrator.js';
 import { runAcceptanceTests } from './benchmark-acceptance.js';
 import { bootstrapBenchmarkRepo } from './benchmark-bootstrap.js';
+import { runGoldenTests } from './benchmark-golden-runner.js';
+import { verifyAndRetry } from './benchmark-verify-loop.js';
 import { createDeps } from './deps.js';
 import { readMetricsRecords } from './metrics-report.js';
 import { enqueuePlan, flattenPlan, generatePlan } from './planner.js';
@@ -93,6 +95,9 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     if (!enqueued.ok) { logAttempt(entry, attempt, `enqueue failed: ${enqueued.error.message}`); return { result: ok(failed(entry, started, enqueued.error.message, metadata)), repoPath }; }
     logAttempt(entry, attempt, `enqueued ${enqueued.value.length} tasks`);
     const orchestrated = await runOrchestrator(deps.value, Date.now() + (entry.suite.maxTimeSec * 1000));
+    const deadline = Date.now() + Math.max(0, (entry.suite.maxTimeSec * 1000) - (Date.now() - started));
+    const verify = await verifyAndRetry(repoPath, deps.value, runOrchestrator, deadline, msg => logAttempt(entry, attempt, msg));
+    if (verify.retried) logAttempt(entry, attempt, `verify retry: tests ${verify.testsPassed ? 'passed' : 'still failing'}`);
     if (entry.suite.goldenTestFile) {
       const goldenDir = join(repoPath, 'src', '__tests__');
       try {
@@ -103,6 +108,8 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
         logAttempt(entry, attempt, `golden injection failed: ${e instanceof Error ? e.message : 'unknown error'}`);
       }
     }
+    const goldenResults = entry.suite.goldenTestFile ? await runGoldenTests(repoPath) : [];
+    if (goldenResults.length > 0) logAttempt(entry, attempt, `golden: ${goldenResults.filter(r => r.passed).length}/${goldenResults.length} passed`);
     const acceptance = await runAcceptanceTests(repoPath, entry.suite.acceptanceTests);
     const metrics = await readMetricsRecords({ repoPath });
     const tasks = await deps.value.queue.list();
@@ -117,6 +124,7 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     if (metrics.ok) logAttempt(entry, attempt, `metrics count: ${metrics.value.length}`);
     const checks = [
       ...(acceptance.ok ? acceptance.value : [{ name: 'acceptance', passed: false, output: acceptance.error.message }]),
+      ...goldenResults,
       ...(orchestrated.ok ? [] : [{ name: 'orchestrator', passed: false, output: orchestrated.error.message }]),
     ];
     const taskList = tasks.ok ? tasks.value : [], metricList = metrics.ok ? metrics.value : [];

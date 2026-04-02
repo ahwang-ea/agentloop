@@ -15,6 +15,8 @@ const createDeps = jest.fn(async () => ok({
 const generatePlan = jest.fn(async () => ok([]));
 const enqueuePlan = jest.fn(async () => ok([]));
 const runOrchestrator = jest.fn(async () => err('BUDGET_EXCEEDED', 'timed out'));
+const runGoldenTests = jest.fn(async () => [] as { name: string; passed: boolean; output?: string }[]);
+const verifyAndRetry = jest.fn(async () => ({ retried: false, testsPassed: true }));
 const runAcceptanceTests = jest.fn(async () => ok([{ name: 'compiles', passed: true }]));
 const readMetricsRecords = jest.fn(async () => ok([
   { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },
@@ -26,6 +28,8 @@ const flattenPlan = jest.fn((plan: unknown[]) => plan);
 await jest.unstable_mockModule('../planner.js', () => ({ generatePlan, enqueuePlan, flattenPlan, formatPlan: jest.fn() }));
 await jest.unstable_mockModule('../../orchestrator.js', () => ({ runOrchestrator }));
 await jest.unstable_mockModule('../benchmark-acceptance.js', () => ({ runAcceptanceTests }));
+await jest.unstable_mockModule('../benchmark-golden-runner.js', () => ({ runGoldenTests }));
+await jest.unstable_mockModule('../benchmark-verify-loop.js', () => ({ verifyAndRetry }));
 await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecords }));
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
@@ -37,6 +41,8 @@ beforeEach(() => {
   generatePlan.mockReset();
   enqueuePlan.mockReset();
   runOrchestrator.mockReset();
+  runGoldenTests.mockReset();
+  verifyAndRetry.mockReset();
   runAcceptanceTests.mockReset();
   readMetricsRecords.mockReset();
   bootstrapBenchmarkRepo.mockResolvedValue(ok('/tmp/agentloop-benchmark-runner'));
@@ -47,6 +53,8 @@ beforeEach(() => {
   generatePlan.mockResolvedValue(ok([]));
   enqueuePlan.mockResolvedValue(ok([]));
   runOrchestrator.mockResolvedValue(err('BUDGET_EXCEEDED', 'timed out'));
+  runGoldenTests.mockResolvedValue([]);
+  verifyAndRetry.mockResolvedValue({ retried: false, testsPassed: true });
   runAcceptanceTests.mockResolvedValue(ok([{ name: 'compiles', passed: true }]));
   readMetricsRecords.mockResolvedValue(ok([
     { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },

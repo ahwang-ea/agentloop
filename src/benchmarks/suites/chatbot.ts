@@ -20,6 +20,5 @@ export const chatbotSuite: BenchmarkSuite = {
     { type: 'file-contains-regex', name: 'has chat endpoint', dir: 'src', extensions: ['.ts'], regex: "['\"/]chat" },
     { type: 'file-exists', name: 'has frontend', paths: ['src/public/index.html', 'public/index.html'] },
     { type: 'file-contains-regex', name: 'has SSE streaming', dir: 'src', extensions: ['.ts'], regex: 'text/event-stream|EventSource' },
-    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPatterns', 'golden'] },
   ],
 };

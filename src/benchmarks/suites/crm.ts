@@ -51,6 +51,5 @@ export const crmSuite: BenchmarkSuite = {
     { type: 'command', name: 'tests pass', cmd: 'npm', args: ['test'] },
     { type: 'file-contains-regex', name: 'has route handlers', dir: 'src', extensions: ['.ts'], regex: 'router\\.(get|post|put|delete)\\(' },
     { type: 'file-contains-regex', name: 'has zod validation', dir: 'src', extensions: ['.ts'], regex: 'z\\.(object|string|number)\\(' },
-    { type: 'command', name: 'golden tests pass', cmd: 'npm', args: ['test', '--', '--testPathPatterns', 'golden'] },
   ],
 };
