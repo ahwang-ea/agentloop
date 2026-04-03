@@ -27,6 +27,12 @@ test('uses stdout json even when jest exits non-zero', async () => {
   await expect(runGoldenTests('/repo')).resolves.toEqual([{ name: 'golden: still reported', passed: false, output: 'boom' }]);
 });
 
+test('handles Jest 30 assertionResults format', async () => {
+  execImpl = async () => ({ stdout: JSON.stringify({ testResults: [{ assertionResults: [{ fullName: 'jest30 test', status: 'passed', failureMessages: [] }] }] }), stderr: '' });
+  const result = await runGoldenTests('/repo');
+  expect(result).toEqual([{ name: 'golden: jest30 test', passed: true }]);
+});
+
 test('returns a single failed golden result when stdout has no json', async () => {
   execImpl = async () => { throw { code: 1, message: 'missing file', stderr: 'Cannot find golden test', stdout: 'plain text only' }; };
   const result = await runGoldenTests('/repo');

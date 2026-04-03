@@ -169,28 +169,14 @@ export async function runBenchmarkSuite(entry: BenchmarkCatalogEntry, base: Agen
   );
   const allRepoPaths: string[] = [];
 
-  return new Promise(resolve => {
-    let settled = false, completedCount = 0;
-    let best: AttemptResult | undefined;
-    for (const runner of runners) {
-      runner.then(attempt => {
-        completedCount++;
-        allRepoPaths.push(attempt.repoPath);
-        if (settled) return;
-        if (!best || (attempt.result.ok && (!best.result.ok || attempt.result.value.score > best.result.value.score))) best = attempt;
-        if (attempt.result.ok && attempt.result.value.score > 0) {
-          settled = true;
-          writeStderr(`[benchmark:${entry.fileStem}] winner found (${completedCount}/${attempts}), score=${attempt.result.value.score}`);
-          resolve(attempt.result);
-          Promise.all(runners).then(() => cleanupRepos(allRepoPaths, attempt.repoPath, entry));
-          return;
-        }
-        if (completedCount === attempts) {
-          settled = true;
-          resolve(best!.result);
-          cleanupRepos(allRepoPaths, best!.repoPath, entry);
-        }
-      });
-    }
-  });
+  const results = await Promise.all(runners);
+  for (const attempt of results) allRepoPaths.push(attempt.repoPath);
+  let best: AttemptResult = results[0];
+  for (const attempt of results) {
+    if (attempt.result.ok && (!best.result.ok || attempt.result.value.score > best.result.value.score)) best = attempt;
+  }
+  const bestScore = best.result.ok ? best.result.value.score : 0;
+  writeStderr(`[benchmark:${entry.fileStem}] best score: ${bestScore} (${attempts} attempts)`);
+  await cleanupRepos(allRepoPaths, best.repoPath, entry);
+  return best.result;
 }

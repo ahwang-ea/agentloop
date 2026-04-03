@@ -1,20 +1,24 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-type JestReport = { testResults?: { testResults?: { fullName?: string; status?: string; failureMessages?: string[] }[] }[] };
+type JestTestResult = { fullName?: string; status?: string; failureMessages?: string[] };
+type JestReport = { testResults?: { testResults?: JestTestResult[]; assertionResults?: JestTestResult[] }[] };
 type GoldenTestResult = { name: string; passed: boolean; output?: string };
 
 const exec = promisify(execFile);
 const text = (...parts: (string | undefined)[]) => parts.filter(Boolean).join('\n').trim() || undefined;
 const parse = (stdout: string): { report?: JestReport; parseError?: string } => {
-  const start = stdout.indexOf('{'); let parseError = 'No Jest JSON output found';
-  for (let end = stdout.length; start >= 0 && end > start; end--) {
-    try { return { report: JSON.parse(stdout.slice(start, end)) as JestReport }; }
-    catch (error) { parseError = error instanceof Error ? error.message : String(error); }
-  }
-  return { parseError };
+  const start = stdout.indexOf('{');
+  if (start < 0) return { parseError: 'No Jest JSON output found' };
+  const candidate = stdout.slice(start);
+  try { return { report: JSON.parse(candidate) as JestReport }; }
+  catch { /* trailing noise after JSON — find the last } and retry */ }
+  const end = candidate.lastIndexOf('}');
+  if (end <= 0) return { parseError: 'No valid JSON block found' };
+  try { return { report: JSON.parse(candidate.slice(0, end + 1)) as JestReport }; }
+  catch (error) { return { parseError: error instanceof Error ? error.message : String(error) }; }
 };
-const map = (report: JestReport): GoldenTestResult[] => report.testResults?.flatMap(file => file.testResults ?? []).map(test => ({
+const map = (report: JestReport): GoldenTestResult[] => report.testResults?.flatMap(file => file.assertionResults ?? file.testResults ?? []).map(test => ({
   name: `golden: ${test.fullName ?? 'unknown'}`,
   passed: test.status === 'passed',
   output: text((test.failureMessages ?? []).join('\n')),
