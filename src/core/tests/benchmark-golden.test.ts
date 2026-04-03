@@ -5,14 +5,14 @@ import type { BenchmarkCatalogEntry } from '../../benchmarks/types.js';
 import type { AgentloopConfig } from '../../types/index.js';
 
 const repoPath = '/tmp/agentloop-benchmark-runner', goldenPath = join(repoPath, 'src', '__tests__', 'golden.test.ts');
-const mkdir = jest.fn(async () => undefined), rm = jest.fn(async () => undefined), writeFile = jest.fn(async () => undefined);
+const mkdir = jest.fn(async () => undefined), readFile = jest.fn(async () => 'export const app = true;\n'), readdir = jest.fn(async () => []), rm = jest.fn(async () => undefined), writeFile = jest.fn(async () => undefined);
 const bootstrapBenchmarkRepo = jest.fn(async () => ok(repoPath)), createDeps = jest.fn(async () => ok({ queue: { list: async () => ok([]) } } as never));
 const generatePlan = jest.fn(async () => ok([])), enqueuePlan = jest.fn(async () => ok([])), runOrchestrator = jest.fn(async () => ok(undefined as never));
 const runAcceptanceTests = jest.fn(async () => ok([{ name: 'smoke', passed: true }])), readMetricsRecords = jest.fn(async () => ok([] as never));
 const runGoldenTests = jest.fn(async () => [] as { name: string; passed: boolean; output?: string }[]);
 const verifyAndRetry = jest.fn(async () => ({ retried: false, testsPassed: true }));
 
-await jest.unstable_mockModule('node:fs/promises', () => ({ mkdir, rm, writeFile }));
+await jest.unstable_mockModule('node:fs/promises', () => ({ mkdir, readFile, readdir, rm, writeFile }));
 await jest.unstable_mockModule('../benchmark-bootstrap.js', () => ({ bootstrapBenchmarkRepo }));
 await jest.unstable_mockModule('../deps.js', () => ({ createDeps }));
 await jest.unstable_mockModule('../planner.js', () => ({ generatePlan, enqueuePlan, flattenPlan: jest.fn((plan: unknown[]) => plan), formatPlan: jest.fn() }));
@@ -37,14 +37,14 @@ const config: AgentloopConfig = {
 beforeEach(() => {
   jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   process.env.AGENTLOOP_BENCHMARK_ATTEMPTS = '1';
-  for (const mock of [mkdir, rm, writeFile, bootstrapBenchmarkRepo, createDeps, generatePlan, enqueuePlan, runOrchestrator, runAcceptanceTests, runGoldenTests, verifyAndRetry, readMetricsRecords]) mock.mockReset();
+  for (const mock of [mkdir, readFile, readdir, rm, writeFile, bootstrapBenchmarkRepo, createDeps, generatePlan, enqueuePlan, runOrchestrator, runAcceptanceTests, runGoldenTests, verifyAndRetry, readMetricsRecords]) mock.mockReset();
   bootstrapBenchmarkRepo.mockResolvedValue(ok(repoPath));
   createDeps.mockResolvedValue(ok({ queue: { list: async () => ok([]) } } as never));
   generatePlan.mockResolvedValue(ok([])); enqueuePlan.mockResolvedValue(ok([])); runOrchestrator.mockResolvedValue(ok(undefined as never));
   runGoldenTests.mockResolvedValue([]);
   verifyAndRetry.mockResolvedValue({ retried: false, testsPassed: true });
   runAcceptanceTests.mockResolvedValue(ok([{ name: 'smoke', passed: true }])); readMetricsRecords.mockResolvedValue(ok([] as never));
-  mkdir.mockResolvedValue(undefined); rm.mockResolvedValue(undefined); writeFile.mockResolvedValue(undefined);
+  mkdir.mockResolvedValue(undefined); readFile.mockResolvedValue('export const app = true;\n'); readdir.mockResolvedValue([]); rm.mockResolvedValue(undefined); writeFile.mockResolvedValue(undefined);
 });
 
 afterEach(() => { delete process.env.AGENTLOOP_BENCHMARK_ATTEMPTS; jest.restoreAllMocks(); });

@@ -8,6 +8,7 @@ import { runOrchestrator } from '../orchestrator.js';
 import { runAcceptanceTests } from './benchmark-acceptance.js';
 import { bootstrapBenchmarkRepo } from './benchmark-bootstrap.js';
 import { runGoldenTests } from './benchmark-golden-runner.js';
+import { checkIntegration } from './benchmark-integration-check.js';
 import { verifyAndRetry } from './benchmark-verify-loop.js';
 import { createDeps } from './deps.js';
 import { readMetricsRecords } from './metrics-report.js';
@@ -108,6 +109,7 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
         logAttempt(entry, attempt, `golden injection failed: ${e instanceof Error ? e.message : 'unknown error'}`);
       }
     }
+    const integrationResults = await checkIntegration(repoPath, entry.suite.goal);
     const goldenResults = entry.suite.goldenTestFile ? await runGoldenTests(repoPath) : [];
     if (goldenResults.length > 0) logAttempt(entry, attempt, `golden: ${goldenResults.filter(r => r.passed).length}/${goldenResults.length} passed`);
     const acceptance = await runAcceptanceTests(repoPath, entry.suite.acceptanceTests);
@@ -124,6 +126,7 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     if (metrics.ok) logAttempt(entry, attempt, `metrics count: ${metrics.value.length}`);
     const checks = [
       ...(acceptance.ok ? acceptance.value : [{ name: 'acceptance', passed: false, output: acceptance.error.message }]),
+      ...integrationResults,
       ...goldenResults,
       ...(orchestrated.ok ? [] : [{ name: 'orchestrator', passed: false, output: orchestrated.error.message }]),
     ];
