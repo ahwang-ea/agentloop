@@ -16,7 +16,7 @@ const rules = [
   'Include tests in acceptance criteria. Use dependsOn only for EARLIER planIds.',
   'SPEED: Generate 4-5 self-contained tasks. Each entity task must include its service, route handler, AND tests so it compiles independently.',
   'SPEED: Dependency depth MUST be exactly 2. One foundation task (types+schemas+db, no deps). ALL remaining tasks depend ONLY on foundation and run fully in parallel.',
-  'SPEED: Do NOT create a final wiring/integration task that depends on entity tasks. The app wiring task depends only on foundation. Entity route files are mounted by the app task via dynamic imports or the app task creates stubs.',
+  'Always include a final task titled “App wiring and integration” that depends on all other tasks. This task must: import and mount all route/service modules in the app entry point, ensure the app is exported as the default export, include a smoke test that starts the app and makes basic HTTP requests, and set editableFiles to include the app entry point (src/app.ts or equivalent) plus an integration test file.',
   'SPEED: Each entity task writes ALL files it needs to compile: service + route + test. It must pass typecheck independently.',
   'SPEED: NO TWO TASKS may write to the same file. Each task must own exclusive files. Do not create shared barrel files (index.ts, routes/index.ts) in entity tasks — only the foundation or app wiring task may create shared barrels.',
   'SPEED: Keep entity tasks SMALL — prefer 2-3 files per task (one service, one route, one test). Fewer files = faster completion.',

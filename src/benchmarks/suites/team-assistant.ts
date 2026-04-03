@@ -1,4 +1,5 @@
 import type { BenchmarkSuite } from '../types.js';
+import { teamAssistantGoldenTest } from '../golden-tests/team-assistant.js';
 
 export const teamAssistantSuite: BenchmarkSuite = {
   name: 'Team CLI assistant',
@@ -10,6 +11,7 @@ export const teamAssistantSuite: BenchmarkSuite = {
   ].join(' '),
   maxTimeSec: 2400,
   baseDeps: ['commander', 'inquirer', '@types/inquirer', 'better-sqlite3', '@types/better-sqlite3', 'openai'],
+  goldenTestFile: teamAssistantGoldenTest,
   acceptanceTests: [
     { type: 'command', name: 'compiles', cmd: 'npm', args: ['run', 'typecheck'] },
     { type: 'command', name: 'tests pass', cmd: 'npm', args: ['test'] },

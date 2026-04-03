@@ -1,7 +1,11 @@
 import { jest } from '@jest/globals';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { err, ok } from '../../shared/result.js';
 import type { BenchmarkCatalogEntry } from '../../benchmarks/types.js';
 import type { AgentloopConfig } from '../../types/index.js';
+import { checkIntegration } from '../benchmark-integration-check.js';
 
 const bootstrapBenchmarkRepo = jest.fn(async () => ok('/tmp/agentloop-benchmark-runner'));
 const createDeps = jest.fn(async () => ok({
@@ -15,10 +19,13 @@ const createDeps = jest.fn(async () => ok({
 const generatePlan = jest.fn(async () => ok([]));
 const enqueuePlan = jest.fn(async () => ok([]));
 const runOrchestrator = jest.fn(async () => err('BUDGET_EXCEEDED', 'timed out'));
+const runGoldenTests = jest.fn(async () => [] as { name: string; passed: boolean; output?: string }[]);
+const verifyAndRetry = jest.fn(async () => ({ retried: false, testsPassed: true }));
 const runAcceptanceTests = jest.fn(async () => ok([{ name: 'compiles', passed: true }]));
 const readMetricsRecords = jest.fn(async () => ok([
   { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },
 ]));
+let repoPath = '';
 
 await jest.unstable_mockModule('../benchmark-bootstrap.js', () => ({ bootstrapBenchmarkRepo }));
 await jest.unstable_mockModule('../deps.js', () => ({ createDeps }));
@@ -26,19 +33,30 @@ const flattenPlan = jest.fn((plan: unknown[]) => plan);
 await jest.unstable_mockModule('../planner.js', () => ({ generatePlan, enqueuePlan, flattenPlan, formatPlan: jest.fn() }));
 await jest.unstable_mockModule('../../orchestrator.js', () => ({ runOrchestrator }));
 await jest.unstable_mockModule('../benchmark-acceptance.js', () => ({ runAcceptanceTests }));
+await jest.unstable_mockModule('../benchmark-golden-runner.js', () => ({ runGoldenTests }));
+await jest.unstable_mockModule('../benchmark-verify-loop.js', () => ({ verifyAndRetry }));
 await jest.unstable_mockModule('../metrics-report.js', () => ({ readMetricsRecords }));
 const { runBenchmarkSuite } = await import('../benchmark-runner.js');
 
 beforeEach(() => {
+  process.env.AGENTLOOP_BENCHMARK_ATTEMPTS = '1';
   jest.spyOn(process.stderr, 'write').mockReturnValue(true);
   bootstrapBenchmarkRepo.mockReset();
   createDeps.mockReset();
   generatePlan.mockReset();
   enqueuePlan.mockReset();
   runOrchestrator.mockReset();
+  runGoldenTests.mockReset();
+  verifyAndRetry.mockReset();
   runAcceptanceTests.mockReset();
   readMetricsRecords.mockReset();
-  bootstrapBenchmarkRepo.mockResolvedValue(ok('/tmp/agentloop-benchmark-runner'));
+});
+
+beforeEach(async () => {
+  repoPath = await mkdtemp(join(tmpdir(), 'benchmark-runner-'));
+  await mkdir(join(repoPath, 'src'), { recursive: true });
+  await writeFile(join(repoPath, 'src', 'app.ts'), 'export const app = true;\n', 'utf-8');
+  bootstrapBenchmarkRepo.mockResolvedValue(ok(repoPath));
   createDeps.mockResolvedValue(ok({ queue: { list: async () => ok([
     { task: { id: 't1', title: 'Done', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' }, status: 'done', round: 1, startedAt: '' },
     { task: { id: 't2', title: 'Queued', description: '', type: 'implement', scope: { editableFiles: [], readOnlyContext: [], forbiddenFiles: [] }, acceptanceCriteria: [], priority: 'medium', createdAt: '' }, status: 'queued', round: 0, startedAt: '' },
@@ -46,6 +64,8 @@ beforeEach(() => {
   generatePlan.mockResolvedValue(ok([]));
   enqueuePlan.mockResolvedValue(ok([]));
   runOrchestrator.mockResolvedValue(err('BUDGET_EXCEEDED', 'timed out'));
+  runGoldenTests.mockResolvedValue([]);
+  verifyAndRetry.mockResolvedValue({ retried: false, testsPassed: true });
   runAcceptanceTests.mockResolvedValue(ok([{ name: 'compiles', passed: true }]));
   readMetricsRecords.mockResolvedValue(ok([
     { task_id: 't1', task: 'Done', rounds: 1, timeSec: 12, reviewFindings: 0, outcome: 'merged', errors: [], files: [], timestamp: '2026-03-30T00:00:00.000Z' },
@@ -53,8 +73,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.AGENTLOOP_BENCHMARK_ATTEMPTS;
   jest.restoreAllMocks();
 });
+
+afterEach(async () => { if (repoPath) await rm(repoPath, { recursive: true, force: true }); });
 
 const entry: BenchmarkCatalogEntry = {
   id: 'crm',
@@ -133,7 +156,6 @@ test('falls back to enqueued task counts when queue listing is empty', async () 
 
 
 test('retries transient planner failures before giving up', async () => {
-  process.env.AGENTLOOP_BENCHMARK_ATTEMPTS = '1';
   generatePlan
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: Repeated 529 Overloaded errors'))
     .mockResolvedValueOnce(err('SESSION_ERROR', 'API Error: 500 internal server error'))
@@ -146,5 +168,28 @@ test('retries transient planner failures before giving up', async () => {
   const result = await runBenchmarkSuite(entry, config);
   expect(result.ok).toBe(true);
   expect(generatePlan).toHaveBeenCalledTimes(3);
-  delete process.env.AGENTLOOP_BENCHMARK_ATTEMPTS;
+});
+
+test('reports missing route imports from the app entry point', async () => {
+  await mkdir(join(repoPath, 'src', 'routes'), { recursive: true });
+  await writeFile(join(repoPath, 'src', 'routes', 'contacts.ts'), 'export const contacts = true;\n', 'utf-8');
+  await expect(checkIntegration(repoPath, 'build a crm')).resolves.toEqual([
+    { name: 'integration: contacts imported', passed: false, output: `Missing import in ${join(repoPath, 'src', 'app.ts')}` },
+  ]);
+});
+
+test('appends integration checks before golden results', async () => {
+  await mkdir(join(repoPath, 'src', 'routes'), { recursive: true });
+  await writeFile(join(repoPath, 'src', 'routes', 'contacts.ts'), 'export const contacts = true;\n', 'utf-8');
+  await writeFile(join(repoPath, 'src', 'app.ts'), 'import "./routes/contacts";\n', 'utf-8');
+  runOrchestrator.mockResolvedValueOnce(ok(undefined as never));
+  runGoldenTests.mockResolvedValueOnce([{ name: 'golden: wired', passed: true }]);
+  const result = await runBenchmarkSuite({ ...entry, suite: { ...entry.suite, goldenTestFile: 'test("golden", () => expect(true).toBe(true));\n' } }, config);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.acceptanceTests).toEqual([
+    { name: 'compiles', passed: true },
+    { name: 'integration: contacts imported', passed: true },
+    { name: 'golden: wired', passed: true },
+  ]);
 });

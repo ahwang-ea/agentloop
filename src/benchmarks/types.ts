@@ -6,6 +6,7 @@ export interface BenchmarkSuite {
   maxTimeSec: number;
   baseDeps?: string[];
   architectureNotes?: string;
+  goldenTestFile?: string;
   acceptanceTests: AcceptanceTest[];
 }
 export type AcceptanceTest =

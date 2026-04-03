@@ -2,6 +2,7 @@ import { err, ok, type Result } from '../shared/result.js';
 import type { BenchmarkCatalogEntry, BenchmarkResult } from '../benchmarks/types.js';
 import type { AgentloopConfig } from '../types/index.js';
 import { benchmarkCatalog, findBenchmark } from '../benchmarks/index.js';
+import { appendLedgerEntry } from './benchmark-ledger.js';
 import { formatBenchmarkTable, pruneBenchmarkResults, saveBenchmarkResult } from './benchmark-results.js';
 import { runBenchmarkSuite } from './benchmark-runner.js';
 import { runBenchmarkPreflight } from './preflight.js';
@@ -21,6 +22,7 @@ export async function runBenchmark(config: AgentloopConfig, options: BenchmarkOp
   for (const entry of entries) {
     const result = await runBenchmarkSuite(entry, config); if (!result.ok) return result;
     const saved = await saveBenchmarkResult(entry, result.value, config.repoPath); if (!saved.ok) return saved;
+    const ledger = await appendLedgerEntry(config.repoPath, result.value, entry.fileStem); if (!ledger.ok) return ledger;
     results.push({ entry, result: result.value });
   }
   const pruned = await pruneBenchmarkResults(config.repoPath); if (!pruned.ok) console.error(`benchmark retention: ${pruned.error.message}`);
