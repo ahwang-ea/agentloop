@@ -7,6 +7,7 @@ const { verifyAndRetry } = await import('../benchmark-verify-loop.js');
 
 const deps = { queue: { list: async () => [] }, config: {} };
 const log = jest.fn(), runOrchestrator = jest.fn(async () => ({ ok: true }));
+const failedTests = { stderr: 'stderr boom', stdout: 'stdout boom' };
 
 beforeEach(() => {
   exec.mockReset();
@@ -24,17 +25,18 @@ test('returns success without retry when tests pass', async () => {
   expect(runOrchestrator).not.toHaveBeenCalled();
 });
 
-test('retries orchestrator when tests fail with enough time remaining', async () => {
-  exec.mockRejectedValueOnce(new Error('fail')).mockResolvedValueOnce({ stdout: '', stderr: '' });
-  await expect(verifyAndRetry('/repo', deps, runOrchestrator, Date.now() + 400_000, log)).resolves.toEqual({ retried: true, testsPassed: true });
-  expect(log).toHaveBeenCalledWith('tests failed, retrying orchestrator with remaining budget');
-  expect(runOrchestrator).toHaveBeenCalledWith(deps, expect.any(Number));
+test('retries orchestrator with failure output when tests fail with enough time remaining', async () => {
+  exec.mockRejectedValueOnce(failedTests).mockResolvedValueOnce({ stdout: '', stderr: '' });
+  await expect(verifyAndRetry('/repo', deps, runOrchestrator, Date.now() + 400_000, log)).resolves.toEqual({ retried: true, testsPassed: true, failureOutput: 'stderr boom\nstdout boom' });
+  expect(log).toHaveBeenNthCalledWith(1, 'test failure output:\nstderr boom\nstdout boom');
+  expect(log).toHaveBeenNthCalledWith(2, 'tests failed, retrying orchestrator with remaining budget');
+  expect(runOrchestrator).toHaveBeenCalledWith({ ...deps, failureOutput: 'stderr boom\nstdout boom' }, expect.any(Number), 'stderr boom\nstdout boom');
   expect(exec).toHaveBeenCalledTimes(2);
 });
 
-test('returns failure without retry when budget is too low', async () => {
-  exec.mockRejectedValueOnce(new Error('fail'));
-  await expect(verifyAndRetry('/repo', deps, runOrchestrator, Date.now() + 180_000, log)).resolves.toEqual({ retried: false, testsPassed: false });
+test('returns failure output without retry when budget is too low', async () => {
+  exec.mockRejectedValueOnce(failedTests);
+  await expect(verifyAndRetry('/repo', deps, runOrchestrator, Date.now() + 180_000, log)).resolves.toEqual({ retried: false, testsPassed: false, failureOutput: 'stderr boom\nstdout boom' });
   expect(runOrchestrator).not.toHaveBeenCalled();
   expect(log).not.toHaveBeenCalled();
 });

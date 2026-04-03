@@ -97,8 +97,15 @@ async function runSingleAttempt(entry: BenchmarkCatalogEntry, base: AgentloopCon
     logAttempt(entry, attempt, `enqueued ${enqueued.value.length} tasks`);
     const orchestrated = await runOrchestrator(deps.value, Date.now() + (entry.suite.maxTimeSec * 1000));
     const deadline = Date.now() + Math.max(0, (entry.suite.maxTimeSec * 1000) - (Date.now() - started));
-    const verify = await verifyAndRetry(repoPath, deps.value, runOrchestrator, deadline, msg => logAttempt(entry, attempt, msg));
+    const verify = await verifyAndRetry(
+      repoPath,
+      deps.value,
+      (runtimeDeps, runtimeDeadline, failureOutput) => runOrchestrator(failureOutput ? { ...runtimeDeps, failureOutput } : runtimeDeps, runtimeDeadline),
+      deadline,
+      msg => logAttempt(entry, attempt, msg),
+    );
     if (verify.retried) logAttempt(entry, attempt, `verify retry: tests ${verify.testsPassed ? 'passed' : 'still failing'}`);
+    if (verify.retried && verify.failureOutput) logAttempt(entry, attempt, `verify failure: ${verify.failureOutput.slice(0, 500)}`);
     if (entry.suite.goldenTestFile) {
       const goldenDir = join(repoPath, 'src', '__tests__');
       try {
