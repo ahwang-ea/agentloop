@@ -20,7 +20,7 @@ afterEach(() => jest.restoreAllMocks());
 test('returns success without retry when tests pass', async () => {
   exec.mockResolvedValueOnce({ stdout: '', stderr: '' });
   await expect(verifyAndRetry('/repo', deps, runOrchestrator, Date.now() + 400_000, log)).resolves.toEqual({ retried: false, testsPassed: true });
-  expect(exec).toHaveBeenCalledWith(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['test', '--', '--maxWorkers=100%', '--testPathIgnorePatterns', 'golden\\.test\\.ts$'], { cwd: '/repo', timeout: 180_000 });
+  expect(exec).toHaveBeenCalledWith(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['test', '--', '--maxWorkers=100%', '--testPathIgnorePatterns', 'golden\\.test\\.ts$'], { cwd: '/repo', timeout: 180_000, maxBuffer: 10_000_000 });
   expect(runOrchestrator).not.toHaveBeenCalled();
 });
 

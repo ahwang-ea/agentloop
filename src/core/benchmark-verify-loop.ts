@@ -5,7 +5,7 @@ const exec = promisify(execFile), npm = process.platform === 'win32' ? 'npm.cmd'
 const runTests = (repoPath: string) => exec(
   npm,
   ['test', '--', '--maxWorkers=100%', '--testPathIgnorePatterns', 'golden\\.test\\.ts$'],
-  { cwd: repoPath, timeout: 180_000 },
+  { cwd: repoPath, timeout: 180_000, maxBuffer: 10_000_000 },
 ).then(() => true, () => false);
 
 export async function verifyAndRetry(

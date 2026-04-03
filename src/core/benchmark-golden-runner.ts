@@ -28,11 +28,13 @@ export async function runGoldenTests(repoPath: string): Promise<GoldenTestResult
   const cmd = process.platform === 'win32' ? 'npm.cmd' : 'npm', args = ['test', '--', '--testPathPatterns', 'golden', '--json', '--forceExit'];
   try {
     const { stdout, stderr } = await exec(cmd, args, { cwd: repoPath, timeout: 180_000, maxBuffer: 10_000_000 });
-    const { report, parseError } = parse(String(stdout ?? ''));
-    return report ? map(report) : [{ name: 'golden', passed: false, output: text(parseError, String(stderr ?? ''), String(stdout ?? '')) }];
+    const combined = String(stdout ?? '') + String(stderr ?? '');
+    const { report, parseError } = parse(combined);
+    return report ? map(report) : [{ name: 'golden', passed: false, output: text(parseError, combined) }];
   } catch (error) {
     const failed = error as { stdout?: string; stderr?: string; message?: string };
-    const { report, parseError } = parse(String(failed.stdout ?? ''));
-    return report ? map(report) : [{ name: 'golden', passed: false, output: text(failed.message, parseError, String(failed.stderr ?? ''), String(failed.stdout ?? '')) }];
+    const combined = String(failed.stdout ?? '') + String(failed.stderr ?? '');
+    const { report, parseError } = parse(combined);
+    return report ? map(report) : [{ name: 'golden', passed: false, output: text(failed.message, parseError, combined) }];
   }
 }
